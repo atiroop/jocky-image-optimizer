@@ -115,12 +115,12 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 		$this->boot_admin_as( 'subscriber' );
 		$this->assertFalse( current_user_can( 'manage_options' ) );
 		$this->expectException( WPDieException::class );
-		do_action( get_plugin_page_hookname( 'jocky-image-optimizer-settings', 'jocky-image-optimizer' ) );
+		(new AdminPages( new CapabilityDetector() ))->render_settings();
 	}
 
 	public function test_registered_settings_sanitize_persist_and_reject_xss(): void {
 		$this->boot_admin_as( 'administrator' );
-		update_option(
+		$sanitized = sanitize_option(
 			Plugin::OPTION_NAME,
 			array(
 				'output_format' => '<script>alert(1)</script>',
@@ -128,6 +128,7 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 				'auto_optimize' => 'false',
 			)
 		);
+		update_option( Plugin::OPTION_NAME, $sanitized );
 		$saved = get_option( Plugin::OPTION_NAME );
 		$this->assertSame( 'original', $saved['output_format'] );
 		$this->assertSame( 92, $saved['image_quality'] );
@@ -211,6 +212,7 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 
 	private function boot_admin_as( string $role ): void {
 		remove_action( 'admin_init', 'wp_admin_headers' );
+		remove_action( 'admin_init', 'send_frame_options_header' );
 		$user_id = self::factory()->user->create( array( 'role' => $role ) );
 		wp_set_current_user( $user_id );
 		set_current_screen( 'dashboard' );
