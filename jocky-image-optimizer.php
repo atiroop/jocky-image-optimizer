@@ -18,6 +18,11 @@ declare(strict_types=1);
 
 defined( 'ABSPATH' ) || exit;
 
+// Prevent duplicate bootstrap when lifecycle tests re-include this entry point.
+if ( defined( 'JIO_FILE' ) ) {
+	return;
+}
+
 define( 'JIO_VERSION', '0.1.0-dev' );
 define( 'JIO_FILE', __FILE__ );
 define( 'JIO_DIR', plugin_dir_path( __FILE__ ) );
