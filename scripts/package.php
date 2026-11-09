@@ -43,13 +43,27 @@ foreach ( $iterator as $item ) {
 	$absolute = $item->getPathname();
 	$relative = substr( $absolute, strlen( $root ) + 1 );
 	$relative = str_replace( DIRECTORY_SEPARATOR, '/', $relative );
-	if ( preg_match( '~^(?:\.git|build|tests|\.github)(?:/|$)|(?:^|/)\.gitignore$|(?:^|/)composer\.lock$~', $relative ) ) {
+	if ( preg_match( '~^(?:\.git|build|tests|\.github|bin|scripts)(?:/|$)|(?:^|/)(?:\.gitignore|composer\.(?:json|lock)|phpcs\.xml\.dist|phpunit\.xml\.dist)$~', $relative ) ) {
 		continue;
 	}
 	if ( $item->isDir() ) {
 		continue;
 	}
-	if ( ! $zip->addFile( $absolute, $plugin_slug . '/' . $relative ) ) {
+	$archive_name = $plugin_slug . '/' . $relative;
+	if ( in_array( $relative, array( 'vendor/autoload.php', 'vendor/composer/autoload_real.php', 'vendor/composer/autoload_static.php' ), true ) ) {
+		$contents = file_get_contents( $absolute );
+		if ( ! is_string( $contents ) ) {
+			$zip->close();
+			fwrite( STDERR, "Unable to read Composer autoloader file: {$relative}\n" );
+			exit( 1 );
+		}
+		$contents = preg_replace( '/ComposerAutoloaderInit[A-Za-z0-9_]+/', 'ComposerAutoloaderInitJioPlugin', $contents );
+		$contents = preg_replace( '/ComposerStaticInit[A-Za-z0-9_]+/', 'ComposerStaticInitJioPlugin', $contents );
+		$added    = is_string( $contents ) && $zip->addFromString( $archive_name, $contents );
+	} else {
+		$added = $zip->addFile( $absolute, $archive_name );
+	}
+	if ( ! $added ) {
 		$zip->close();
 		fwrite( STDERR, "Unable to add a plugin file to the ZIP archive.\n" );
 		exit( 1 );
