@@ -49,7 +49,17 @@ foreach ( $entries as $entry ) {
 }
 
 $installed_json = $archive->getFromName( 'jocky-image-optimizer/vendor/composer/installed.json' );
+$runtime_autoload = $archive->getFromName( 'jocky-image-optimizer/vendor/autoload.php' );
+$runtime_autoload_real = $archive->getFromName( 'jocky-image-optimizer/vendor/composer/autoload_real.php' );
+$runtime_autoload_static = $archive->getFromName( 'jocky-image-optimizer/vendor/composer/autoload_static.php' );
 $archive->close();
+$runtime_loader_files = array( $runtime_autoload, $runtime_autoload_real, $runtime_autoload_static );
+foreach ( $runtime_loader_files as $loader_file ) {
+	if ( ! is_string( $loader_file ) || false === strpos( $loader_file, 'JioPlugin' ) ) {
+		fwrite( STDERR, "ZIP Composer autoloader does not use the isolated runtime suffix.\n" );
+		exit( 1 );
+	}
+}
 $installed = is_string( $installed_json ) ? json_decode( $installed_json, true ) : null;
 if ( ! is_array( $installed ) || ! array_key_exists( 'dev', $installed ) || true === $installed['dev'] ) {
 	fwrite( STDERR, "ZIP Composer metadata does not identify a production-only install.\n" );
