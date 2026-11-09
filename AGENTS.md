@@ -10,4 +10,8 @@
 - Do not add automatic system package installation, visitor-driven expensive work, or automatic cron configuration.
 - Leave Cloudflare R2 and third-party R2 settings untouched until the dedicated milestone.
 - Run documented checks and state clearly what could not be verified. Do not claim WordPress compatibility without integration testing.
+- Keep `composer audit --locked` clean; update vulnerable dev dependencies rather than ignoring advisories.
+- Integration tests must install and exercise the generated production ZIP in a disposable WordPress core/database. Do not substitute WordPress API stubs for these tests.
+- CI runs on PHP 8.3 and currently covers WordPress 6.6.10 and 7.1.3. Do not report CI results until the GitHub workflow has actually run.
+- Run `composer install --no-dev` before generating the installable ZIP, then restore dev dependencies if further checks are needed.
 - Keep docs and CHANGELOG current when behavior changes.

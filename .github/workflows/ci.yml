@@ -3,24 +3,76 @@ name: CI
 on:
   push:
   pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
-  checks:
-    runs-on: ubuntu-latest
+  static-and-unit:
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: shivammathur/setup-php@v2
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
         with:
           php-version: '8.3'
+          extensions: mbstring, mysqli, xml, zip
           tools: composer:v2
       - run: composer install --no-interaction --prefer-dist
+      - run: composer validate --no-check-publish
+      - run: composer audit --locked
       - name: WordPress Coding Standards
         run: composer lint
       - name: PHP syntax check
-        run: find . -path './.git' -prune -o -path './vendor' -prune -o -name '*.php' -print0 | xargs -0 -n1 php -l
+        run: find . -path './.git' -prune -o -path './vendor' -prune -o -path './build' -prune -o -name '*.php' -print0 | xargs -0 -n1 php -l
       - name: Standalone tests
         run: composer test
-      - name: Install production dependencies
-        run: composer install --no-dev --no-interaction --prefer-dist --optimize-autoloader
-      - name: Build plugin ZIP
-        run: php scripts/package.php
+  wordpress-integration:
+    runs-on: ubuntu-24.04
+    needs: static-and-unit
+    strategy:
+      fail-fast: false
+      matrix:
+        wordpress: ['6.6.10', '7.1.3']
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: wordpress_test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -proot"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+    env:
+      WP_VERSION: ${{ matrix.wordpress }}
+      TMPDIR: ${{ runner.temp }}/jio-wp-tests
+      WP_CORE_DIR: ${{ runner.temp }}/jio-wp-tests/wordpress
+      WP_TESTS_DIR: ${{ runner.temp }}/jio-wp-tests/wordpress-tests-lib
+      WP_INSTALL_TESTS_SKIP_UPDATE_CHECK: 'true'
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
+        with:
+          php-version: '8.3'
+          extensions: mbstring, mysqli, xml, zip
+          tools: composer:v2
+      - run: composer install --no-interaction --prefer-dist
+      - name: Build and verify production ZIP
+        run: |
+          composer install --no-dev --no-interaction --prefer-dist --optimize-autoloader
+          php scripts/package.php
+          composer test:package
+          composer install --no-interaction --prefer-dist
+      - name: Install isolated WordPress test runtime
+        run: |
+          bash bin/install-wp-tests.sh wordpress_test root root 127.0.0.1 "$WP_VERSION" true
+          mkdir -p "$WP_CORE_DIR/wp-content/plugins"
+          unzip -q build/jocky-image-optimizer-0.1.0-dev.zip -d "$WP_CORE_DIR/wp-content/plugins"
+      - name: Run WordPress integration tests against packaged plugin
+        env:
+          JIO_PACKAGE_PATH: ${{ github.workspace }}/build/jocky-image-optimizer-0.1.0-dev.zip
+        run: composer test:integration

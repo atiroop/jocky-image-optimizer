@@ -1,6 +1,6 @@
 # Jocky Image Optimizer
 
-Jocky Image Optimizer is a self-hosted WordPress plugin foundation for local image optimization. This development release implements **Milestone 1 only**: safe activation, settings storage, admin diagnostics, documentation, checks, and packaging. It does not process images, change attachment metadata, create derivatives, or alter uploads.
+Jocky Image Optimizer is a self-hosted WordPress plugin foundation for local image optimization. This development release implements Milestone 1 and adds Milestone 1.5 validation tooling: safe activation, settings storage, admin diagnostics, WordPress integration tests, CI, and packaging. Image processing remains unimplemented; the plugin does not alter uploads.
 
 ## Requirements
 
@@ -8,6 +8,8 @@ Jocky Image Optimizer is a self-hosted WordPress plugin foundation for local ima
 - PHP 8.3 or later
 - Composer 2 for development/package creation
 - PHP `ZipArchive` for ZIP packaging
+- PHP extensions `mysqli`, `mbstring`, `xml`, and `zip` for WordPress integration tests
+- Disposable MySQL 8.0/MariaDB test database for WordPress integration tests
 - A Linux server is recommended for future command-line encoder integrations. Windows is supported for development, but server encoder availability and behavior must be checked on the target Linux host.
 
 No image encoder is required to activate this milestone. The dashboard reports detected GD, Imagick, WebP/AVIF support, and selected encoder executables. It never installs system packages.
@@ -31,13 +33,40 @@ Activation adds defaults only when no settings option exists. Deactivation has n
 
 ```sh
 composer install --no-interaction
+composer validate --no-check-publish
+composer audit --locked
 composer lint
 composer test
 composer install --no-dev --no-interaction --optimize-autoloader
 php scripts/package.php
+composer test:package
+composer install --no-interaction
+# After provisioning the disposable WordPress/MySQL environment below:
+composer test:integration
 ```
 
-See [VALIDATION.md](VALIDATION.md) for checks actually run and unresolved limits. Local validation used PHP 8.5; PHP 8.3 and real WordPress activation/admin integration were unavailable. GitHub Actions is configured to run on PHP 8.3.
+`composer test` contains dependency-free unit checks with WordPress API stubs. `composer test:integration` runs against a real WordPress core and disposable database; it installs and activates the generated ZIP, not the development source. See [VALIDATION.md](VALIDATION.md) for actual execution status and limitations.
+
+### Local WordPress integration setup
+
+Use Linux or WSL2 with PHP 8.3, Composer, Git, curl, Subversion, tar/unzip, and a disposable MySQL/MariaDB database. Do not point this procedure at a production database. Create an empty database named `wordpress_test` (for example, `mysql -u root -p -e 'CREATE DATABASE wordpress_test'`), then:
+
+```sh
+composer install --no-interaction
+export TMPDIR="$(mktemp -d)"
+export WP_CORE_DIR="$TMPDIR/wordpress"
+export WP_TESTS_DIR="$TMPDIR/wordpress-tests-lib"
+export WP_INSTALL_TESTS_SKIP_UPDATE_CHECK=true
+bash bin/install-wp-tests.sh wordpress_test root 'test-only-password' 127.0.0.1 6.6.10 true
+composer install --no-dev --no-interaction --optimize-autoloader
+php scripts/package.php
+composer install --no-interaction
+unzip -q build/jocky-image-optimizer-0.1.0-dev.zip -d "$WP_CORE_DIR/wp-content/plugins"
+export JIO_PACKAGE_PATH="$PWD/build/jocky-image-optimizer-0.1.0-dev.zip"
+composer test:integration
+```
+
+The installer puts WordPress core and test files under `TMPDIR`; remove that uniquely created temporary directory and drop only the disposable `wordpress_test` database after testing. The installer refuses to recursively remove pre-existing core or test-library paths. The installer script is vendored from a pinned WP-CLI scaffold-command revision. GitHub Actions provisions and tears down its own temporary MySQL service and tests WordPress 6.6.10 and 7.1.3 on PHP 8.3.
 
 ## Security and scope
 

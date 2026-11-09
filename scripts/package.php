@@ -43,7 +43,7 @@ foreach ( $iterator as $item ) {
 	$absolute = $item->getPathname();
 	$relative = substr( $absolute, strlen( $root ) + 1 );
 	$relative = str_replace( DIRECTORY_SEPARATOR, '/', $relative );
-	if ( preg_match( '~^(?:\.git|build|tests|\.github)(?:/|$)|(?:^|/)\.gitignore$|(?:^|/)composer\.lock$~', $relative ) ) {
+	if ( preg_match( '~^(?:\.git|build|tests|\.github|bin|scripts)(?:/|$)|(?:^|/)(?:\.gitignore|composer\.(?:json|lock)|phpcs\.xml\.dist|phpunit\.xml\.dist)$~', $relative ) ) {
 		continue;
 	}
 	if ( $item->isDir() ) {

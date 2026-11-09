@@ -1,21 +1,37 @@
-# Milestone 1 Validation
+# Milestone 1.5 Validation
 
-Validation performed on 2026-11-09 in the Windows development workspace.
+Status: **partially verified**. Validation performed on 2026-11-09 in the Windows development workspace. No production site, VPS, or user media was accessed.
 
 | Check | Result | Evidence / limitation |
 |---|---|---|
-| PHP syntax | Passed | All seven project PHP files passed `php -l` on PHP 8.5.0. PHP 8.3 is not installed locally. |
-| WordPress Coding Standards | Passed | PHP_CodeSniffer 3.13.0 with WPCS 3.2.0 passed the production plugin sources via `composer lint` (5 files). The ruleset exempts WPCS filename rules because PSR-4 requires Composer class filenames matching their classes; all remaining selected WordPress rules apply. |
-| Automated tests | Passed | `composer test`: 16 assertions for setting validation, capability result shape, activation/deactivation, admin hooks/menu capabilities, and sanitized settings persistence using WordPress API stubs. |
-| Composer metadata | Passed | `composer validate --no-check-publish` reports valid. Runtime PHP dependency requirement is PHP >=8.3; no third-party production packages are required. |
-| ZIP package | Passed | Built using production-only Composer dependencies. Checked ZIP root is `jocky-image-optimizer/`, plugin entry point and source are present, and Composer autoloader is included. Development packages, tests, and CI files are excluded. |
-| WordPress installation/activation | Not verified | WordPress, WP-CLI, Docker, and Podman are unavailable locally. API-stub tests cover lifecycle and admin registration but do not replace a disposable WordPress environment. |
-| Media preservation | Code-reviewed / stub-tested | Plugin has no upload hooks or media filesystem mutation code. Activation/deactivation tests confirm no media work is initiated. A real WordPress uploads-directory hash check was not possible without WordPress. |
-| Git | Passed | Repository initialized with the requested `origin`; changes are committed locally. No push was performed. |
+| Repository safety | Passed | Started clean on `main` at `49dd4ba10674fdc8add3caf89be6c576f5dd4015`; created `feature/milestone-1-5-integration`. No remote changes made. |
+| Local environment | Observed | PHP 8.5.0 and Composer 2.8.12 available. PHP 8.3, WordPress, WP-CLI, Docker, Podman, and a local MySQL/MariaDB service are unavailable. |
+| PHP syntax | Passed locally | All 10 project PHP files passed `php -l` on PHP 8.5.0. PHP 8.3 execution is configured in CI but has not run yet. |
+| WordPress Coding Standards | Passed locally | PHP_CodeSniffer 3.13.6/WPCS 3.4.1: `composer lint` passed for the five production plugin files. PSR-4 class filename checks remain the documented narrow exception. |
+| Unit tests | Passed locally | `composer test`: all 16 assertions passed. These are standalone settings, diagnostics, lifecycle, and mocked admin API checks, not WordPress integration tests. |
+| Composer dependencies | Passed locally | `composer validate --no-check-publish` reports valid; `composer audit --locked` reports no security advisories. Earlier vulnerable PHPCS/WPCS/PHPUnit versions were upgraded. |
+| Production ZIP | Passed locally | Generated a 24-entry ZIP after `composer install --no-dev`; `composer test:package` passed and archive inspection found required entries, no dev dependencies, and the expected plugin root. |
+| Test installer syntax | Passed locally | `bash -n bin/install-wp-tests.sh` passed using Git for Windows Bash. |
+| WordPress integration suite | Implemented, not executed | `composer test:integration` targets the WordPress PHPUnit runtime. The local machine lacks WordPress test core/library and a disposable database. The suite tests the installed ZIP, not checkout source. |
+| GitHub Actions | Configured, not executed | PHP 8.3, MySQL 8.0, WordPress 6.6.10 and 7.1.3, static/unit checks, audit, package validation, and packaged-plugin integration tests are defined. This local branch has not been pushed, so no GitHub run exists. |
+| Media preservation | Integration assertion implemented, not executed | Tests create a disposable PNG under the test WordPress uploads directory and compare its SHA-256 before/after lifecycle/admin operations. No user media is used. |
 
-## Remaining validation before release
+## Integration coverage implemented
 
-- Run integration tests on WordPress 6.6+ with PHP 8.3 and verify activation, settings save/reload, access control, and deactivation.
-- Verify the package installs through the WordPress Plugins ZIP uploader in that environment.
-- Hash a disposable uploads directory before/after activation and routine admin visits.
-- Run PHPCS on Linux in CI; local PHPCS ran under Windows/PHP 8.5.
+- Real WordPress activation, repeated activation, deactivation, and stored option preservation.
+- Admin menu/settings registration, `manage_options` enforcement, settings form nonce generation/verification, and sanitized option persistence.
+- Rejection of script input and escaping of an injected executable path in diagnostics.
+- Encoder discovery without executing the fake binary and graceful handling when PATH has no encoder.
+- ZIP structure, Composer runtime autoloader, no-dev metadata, and activation from the extracted package directory.
+- Upload fixture hash preservation across lifecycle and administration.
+
+## Environment and CI procedure
+
+`bin/install-wp-tests.sh` is based on WP-CLI scaffold-command commit `217de3cf5a5930f0aa64e5cb30915682a14ba07c`; recursive removal of existing core/test paths was replaced with refusal checks. Local procedure and temporary directory/database requirements are documented in `README.md`. The GitHub job creates a disposable MySQL service and temp WordPress core for each version in its matrix.
+
+## Remaining verification before Milestone 1.5 is complete
+
+- Run the branch's GitHub Actions workflow and confirm green results for both WordPress versions on PHP 8.3.
+- Resolve any integration failures revealed by that run.
+- Record the actual WordPress/PHP versions and test summaries here after execution; workflow configuration alone is not a pass.
+- A direct HTTP POST to `wp-admin/options.php` as an unauthorized user is not exercised; assertions cover protected page callbacks, Settings API sanitization, and core nonce generation/verification.
