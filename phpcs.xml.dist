@@ -1,0 +1,16 @@
+<?xml version="1.0"?>
+<ruleset name="Jocky Image Optimizer">
+	<description>WordPress Coding Standards for the production plugin source.</description>
+	<rule ref="WordPress" />
+	<!-- PSR-4 requires class filenames to match class names, so retain Composer conventions. -->
+	<rule ref="WordPress.Files.FileName">
+		<severity>0</severity>
+	</rule>
+	<file>jocky-image-optimizer.php</file>
+	<file>src</file>
+	<exclude-pattern>*/vendor/*</exclude-pattern>
+	<exclude-pattern>*/build/*</exclude-pattern>
+	<arg name="basepath" value="." />
+	<arg name="colors" />
+	<arg value="sp" />
+</ruleset>

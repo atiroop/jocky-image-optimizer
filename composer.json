@@ -1,0 +1,29 @@
+{
+  "name": "atiroop/jocky-image-optimizer",
+  "description": "Self-hosted image optimization foundation for WordPress.",
+  "type": "wordpress-plugin",
+  "license": "GPL-2.0-or-later",
+  "require": {
+    "php": ">=8.3"
+  },
+  "autoload": {
+    "psr-4": {
+      "Jocky\\ImageOptimizer\\": "src/"
+    }
+  },
+  "config": {
+    "sort-packages": true,
+    "optimize-autoloader": true,
+    "allow-plugins": {
+      "dealerdirect/phpcodesniffer-composer-installer": true
+    }
+  },
+  "scripts": {
+    "lint": "phpcs",
+    "test": "php tests/run.php"
+  },
+  "require-dev": {
+    "squizlabs/php_codesniffer": "3.13",
+    "wp-coding-standards/wpcs": "3.2"
+  }
+}
