@@ -30,6 +30,9 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 
 		$activation = activate_plugin( self::PLUGIN, '', false, true );
 		$this->assertNotWPError( $activation );
+		if ( false === get_option( Plugin::OPTION_NAME, false ) ) {
+			Plugin::activate();
+		}
 
 		if ( ! self::$plugin_booted ) {
 			do_action( 'plugins_loaded' );
@@ -207,6 +210,7 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 	}
 
 	private function boot_admin_as( string $role ): void {
+		remove_action( 'admin_init', 'wp_admin_headers' );
 		$user_id = self::factory()->user->create( array( 'role' => $role ) );
 		wp_set_current_user( $user_id );
 		set_current_screen( 'dashboard' );
