@@ -14,8 +14,6 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 
 	private static bool $plugin_booted = false;
 
-	private static bool $admin_hooks_booted = false;
-
 	private static string $media_fixture = '';
 
 	private static string $media_fixture_hash = '';
@@ -211,15 +209,10 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 	}
 
 	private function boot_admin_as( string $role ): void {
-		remove_action( 'admin_init', 'wp_admin_headers' );
-		remove_action( 'admin_init', 'send_frame_options_header' );
 		$user_id = self::factory()->user->create( array( 'role' => $role ) );
 		wp_set_current_user( $user_id );
 		set_current_screen( 'dashboard' );
-		if ( ! self::$admin_hooks_booted ) {
-			(new Plugin())->boot();
-			self::$admin_hooks_booted = true;
-		}
+		(new Plugin())->boot();
 		do_action( 'admin_init' );
 		do_action( 'admin_menu' );
 	}

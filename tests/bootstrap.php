@@ -7,6 +7,9 @@
 
 declare(strict_types=1);
 
+// WordPress's test bootstrap prints status text before admin header checks run.
+ob_start();
+
 $tests_dir = getenv( 'WP_TESTS_DIR' );
 if ( ! is_string( $tests_dir ) || '' === $tests_dir ) {
 	$tests_dir = rtrim( sys_get_temp_dir(), '/\\' ) . DIRECTORY_SEPARATOR . 'wordpress-tests-lib';
