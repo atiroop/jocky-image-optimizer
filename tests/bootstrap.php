@@ -34,6 +34,5 @@ require_once $tests_dir . '/includes/functions.php';
 require $tests_dir . '/includes/bootstrap.php';
 
 require_once ABSPATH . 'wp-admin/includes/plugin.php';
-require_once ABSPATH . 'wp-admin/includes/menu.php';
 require_once ABSPATH . 'wp-admin/includes/screen.php';
 require_once ABSPATH . 'wp-admin/includes/template.php';

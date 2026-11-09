@@ -5,6 +5,7 @@
 - Fixed the WordPress integration workflow's pre-job validation error by moving `runner.temp` expressions from job-level to step-level environment configuration.
 - Updated the integration matrix to verified WordPress 6.6.11 and 7.1.4 releases and matching test-suite tags.
 - Set Composer's dependency-resolution platform to PHP 8.3 so locked development tools remain installable on the CI runtime.
+- Removed an eager admin-menu include from the PHPUnit bootstrap; integration tests now initialize admin menus through WordPress hooks.
 
 ## 0.1.0-dev — 2026-11-09
 
