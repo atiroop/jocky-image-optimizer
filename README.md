@@ -57,7 +57,7 @@ export TMPDIR="$(mktemp -d)"
 export WP_CORE_DIR="$TMPDIR/wordpress"
 export WP_TESTS_DIR="$TMPDIR/wordpress-tests-lib"
 export WP_INSTALL_TESTS_SKIP_UPDATE_CHECK=true
-bash bin/install-wp-tests.sh wordpress_test root 'test-only-password' 127.0.0.1 6.6.10 true
+bash bin/install-wp-tests.sh wordpress_test root 'test-only-password' 127.0.0.1 6.6.11 true
 composer install --no-dev --no-interaction --optimize-autoloader
 php scripts/package.php
 composer install --no-interaction
@@ -66,7 +66,7 @@ export JIO_PACKAGE_PATH="$PWD/build/jocky-image-optimizer-0.1.0-dev.zip"
 composer test:integration
 ```
 
-The installer puts WordPress core and test files under `TMPDIR`; remove that uniquely created temporary directory and drop only the disposable `wordpress_test` database after testing. The installer refuses to recursively remove pre-existing core or test-library paths. The installer script is vendored from a pinned WP-CLI scaffold-command revision. GitHub Actions provisions and tears down its own temporary MySQL service and tests WordPress 6.6.10 and 7.1.3 on PHP 8.3.
+The installer puts WordPress core and test files under `TMPDIR`; remove that uniquely created temporary directory and drop only the disposable `wordpress_test` database after testing. The installer refuses to recursively remove pre-existing core or test-library paths. The installer script is vendored from a pinned WP-CLI scaffold-command revision. GitHub Actions provisions and tears down its own temporary MySQL service and tests WordPress 6.6.11 and 7.1.4 on PHP 8.3.
 
 ## Security and scope
 

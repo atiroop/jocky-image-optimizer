@@ -1,5 +1,10 @@
 # Changelog
 
+## Workflow repair — 2026-11-09
+
+- Fixed the WordPress integration workflow's pre-job validation error by moving `runner.temp` expressions from job-level to step-level environment configuration.
+- Updated the integration matrix to verified WordPress 6.6.11 and 7.1.4 releases and matching test-suite tags.
+
 ## 0.1.0-dev — 2026-11-09
 
 - Established WordPress plugin bootstrap and Composer PSR-4 structure.

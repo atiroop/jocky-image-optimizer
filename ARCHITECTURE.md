@@ -27,4 +27,4 @@ The PHP process must have access to the target uploads filesystem and required l
 
 ## Integration testing
 
-GitHub Actions runs production ZIP validation and installs that ZIP into temporary WordPress cores for integration tests against WordPress 6.6.10 and 7.1.3 with PHP 8.3 and MySQL 8.0. The test package is required from the isolated `WP_PLUGIN_DIR`; the Composer loader prioritizes that copy so tests cannot silently exercise the checkout source. Local tests use the same pinned installer script, a temporary core/test-library directory, and a disposable database.
+GitHub Actions runs production ZIP validation and installs that ZIP into temporary WordPress cores for integration tests against WordPress 6.6.11 and 7.1.4 with PHP 8.3 and MySQL 8.0. The test package is required from the isolated `WP_PLUGIN_DIR`; the Composer loader prioritizes that copy so tests cannot silently exercise the checkout source. Local tests use the same pinned installer script, a temporary core/test-library directory, and a disposable database.

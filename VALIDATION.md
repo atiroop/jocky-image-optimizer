@@ -13,7 +13,7 @@ Status: **partially verified**. Validation performed on 2026-11-09 in the Window
 | Production ZIP | Passed locally | Generated a 24-entry ZIP after `composer install --no-dev`; `composer test:package` passed and archive inspection found required entries, no dev dependencies, and the expected plugin root. |
 | Test installer syntax | Passed locally | `bash -n bin/install-wp-tests.sh` passed using Git for Windows Bash. |
 | WordPress integration suite | Implemented, not executed | `composer test:integration` targets the WordPress PHPUnit runtime. The local machine lacks WordPress test core/library and a disposable database. The suite tests the installed ZIP, not checkout source. |
-| GitHub Actions | Configured, not executed | PHP 8.3, MySQL 8.0, WordPress 6.6.10 and 7.1.3, static/unit checks, audit, package validation, and packaged-plugin integration tests are defined. This local branch has not been pushed, so no GitHub run exists. |
+| GitHub Actions | Previous run failed before jobs | Run `42551315621` completed with failure and GitHub's jobs endpoint returned zero jobs. `actionlint 1.7.7` confirmed the pre-job validation error: `${{ runner.temp }}` is invalid in `jobs.<job_id>.env`. Temp paths now use that context at step scope. The WordPress matrix now uses verified downloadable releases 6.6.11 and 7.1.4. The corrected workflow has not yet run. |
 | Media preservation | Integration assertion implemented, not executed | Tests create a disposable PNG under the test WordPress uploads directory and compare its SHA-256 before/after lifecycle/admin operations. No user media is used. |
 
 ## Integration coverage implemented
