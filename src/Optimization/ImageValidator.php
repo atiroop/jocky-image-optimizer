@@ -72,8 +72,9 @@ final class ImageValidator {
 		if ( false === $handle ) {
 			throw new OptimizationException( 'invalid_image', 'The WebP file could not be opened.' );
 		}
-		$declared = unpack( 'V', fread( $handle, 4 ) )[1] + 8;
-		if ( $declared !== $bytes || 'WEBP' !== fread( $handle, 4 ) ) {
+		$signature = fread( $handle, 4 );
+		$declared  = unpack( 'V', fread( $handle, 4 ) )[1] + 8;
+		if ( 'RIFF' !== $signature || $declared !== $bytes || 'WEBP' !== fread( $handle, 4 ) ) {
 			fclose( $handle );
 			throw new OptimizationException( 'invalid_image', 'The WebP RIFF header or length is invalid.' );
 		}
