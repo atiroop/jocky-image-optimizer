@@ -1,8 +1,6 @@
 <?php
 /** Prepares one synthetic queue row and a database barrier for two WP-CLI workers. */
 
-declare(strict_types=1);
-
 global $wpdb;
 
 $attachment_id = (int) getenv( 'JIO_CLI_ATTACHMENT_ID' );

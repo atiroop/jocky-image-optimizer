@@ -1,8 +1,6 @@
 <?php
 /** Disposable WP-CLI checks for cross-connection queue, lock, and migration behavior. */
 
-declare(strict_types=1);
-
 global $wpdb;
 
 $attachment_id = (int) getenv( 'JIO_CLI_ATTACHMENT_ID' );

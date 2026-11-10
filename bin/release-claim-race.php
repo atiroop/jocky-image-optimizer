@@ -1,8 +1,6 @@
 <?php
 /** Releases the database barrier only after both independent workers have arrived. */
 
-declare(strict_types=1);
-
 $deadline = microtime( true ) + 15;
 $wpdb    = $GLOBALS['wpdb'];
 $options = $wpdb->options;

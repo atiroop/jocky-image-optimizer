@@ -1,10 +1,10 @@
 # Changelog
 
-## Unreleased — Milestone 5 recovery and safety closure (prior CI verified 2026-11-10; closure pending)
+## Unreleased — Milestone 5 recovery and safety closure (repair CI pending 2026-11-10)
 
 - Safety closure: destructive per-attachment and bulk cleanup now fail closed unless an explicit constant is enabled in a `local` or `development` WordPress environment. Admin, CLI, worker, and service paths all enforce the gate; read-only preview and verification remain available. Deletion repeats attachment/metadata/registry/queue/path/file identity checks at the unlink boundary and refuses paths WordPress currently manages as originals or thumbnails.
 - Stale queue recovery now acquires the shared attachment advisory lock before transferring an expired job. Schema migration readiness now verifies required indexes and all worker/scanner seed rows; incomplete schema and stale version retry idempotently.
-- Disposable CLI coverage adds a synchronized two-process single-job claim race, token ownership checks, concurrent cleanup lock exclusion, default-off destructive command checks, and partial schema migration repair preserving queue and derivative rows. These additions are pending the newly triggered CI run; see `VALIDATION.md`.
+- Disposable CLI coverage adds a synchronized two-process single-job claim race, token ownership checks, concurrent cleanup lock exclusion, default-off destructive command checks, and partial schema migration repair preserving queue and derivative rows. Initial run 42796487189 passed static/unit and encoder tests plus both PHPUnit integration suites, but both WP-CLI smoke steps failed because `wp eval-file` wraps code and rejects a `strict_types` declaration; the added disposable scripts have been corrected and await rerun. See `VALIDATION.md`.
 
 - Final remediation at `f34ffa1aeb195976c5cda3c9d200aa94fd9ca700` passed all five jobs in [run 42785634155](https://github.com/atiroop/jocky-image-optimizer/actions/runs/42785634155), including the WordPress 6.6.11/7.1.4 matrix, real encoder tests, and packaged beta artifact. The artifact ZIP was downloaded and validated; details and SHA-256 are in `VALIDATION.md`.
 - Recovery now reports failed post-unlink lifecycle database updates as conflicts and avoids reporting false bulk completion when state writes fail. Integration coverage exercises registry/audit failures, pre/post-unlink state failures, administrator request rejection, a separate-connection advisory lock, and destructive packaged WP-CLI cleanup while checking source retention.

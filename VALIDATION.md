@@ -1,10 +1,10 @@
 # Validation
 
-## Milestone 5 — safety closure (new CI pending)
+## Milestone 5 — safety closure (repair run pending)
 
 The feature implementation is on `feature/milestone-5-backup-restore`. This closure adds a default-off destructive recovery gate, stale-lease lock coordination, stronger unlink-boundary checks, independent worker tests, and migration retry tests. The previous code commit passed five jobs in [run 42785634155](https://github.com/atiroop/jocky-image-optimizer/actions/runs/42785634155); that result does not validate the current changes. No production/VPS access or media modification was performed.
 
-Current safety-closure changes have not yet run in GitHub Actions. The previous code commit `f34ffa1aeb195976c5cda3c9d200aa94fd9ca700` passed all five jobs in run 42785634155. Do not count that run as evidence for the new cross-process queue barrier, fail-closed gate, migration repair, or deletion-boundary regressions.
+The first safety-closure run [42796487189](https://github.com/atiroop/jocky-image-optimizer/actions/runs/42796487189) passed static/unit and encoder integration jobs, and the PHPUnit integration steps passed on WordPress 6.6.11 and 7.1.4. Both matrix jobs failed in the added WP-CLI scripts because `wp eval-file` evaluates scripts inside a wrapper, so their `declare(strict_types=1)` statements were not at the start of the evaluated code. The declarations have been removed from those disposable scripts; this repair is awaiting a new workflow run. The cross-process barrier, migration retry, and packaged WP-CLI recovery therefore remain unverified until that run completes.
 
 | Check | Result | Evidence / limitation |
 |---|---|---|

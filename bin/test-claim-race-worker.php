@@ -1,8 +1,6 @@
 <?php
 /** Waits at the disposable database barrier, then claims and completes one job. */
 
-declare(strict_types=1);
-
 global $wpdb;
 
 $token = (string) getenv( 'JIO_CLAIM_TOKEN' );
