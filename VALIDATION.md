@@ -1,5 +1,23 @@
 # Milestone 1.5 Validation
 
+## Milestone 2 implementation check — 2026-11-10
+
+Milestone 2 processing code has been added on `feature/milestone-2-image-engine`; this is an implementation status report, not a production-readiness claim.
+
+| Check | Result | Evidence / limitation |
+|---|---|---|
+| PHP runtime | Not fully verified | Local PHP is 8.5.0; PHP 8.3 is unavailable in this workspace. |
+| PHP syntax | Passed locally | `composer test` loaded the new API and exercised it on PHP 8.5.0. No PHP 8.3 execution was performed. |
+| WPCS | Passed locally after remediation | Before: 215 errors and 34 warnings. After: `composer lint --no-interaction` reports 0 errors and 0 warnings. Scoped, explained WPCS exceptions cover native streaming filesystem calls, hard-link promotion, and `proc_open` argv execution because WordPress filesystem APIs do not provide these bounded/atomic local-file semantics. |
+| Standalone tests | Passed locally | `composer test --no-interaction`: 30 assertions passed, including valid PNG CRCs, invalid CRC, truncated/invalid structure, APNG detection, unsupported/empty data, outside-root rejection, no-benefit handling, bounded stdout/stderr capture, argv exit-code capture, and enforced process timeout. The copy adapter test does not claim compression or savings. |
+| Composer validation/audit | Passed locally | `composer validate --no-check-publish` is valid; `composer audit --locked` reports no advisories. |
+| Real encoder processing | Not available locally; CI configured | `composer test:encoders` was attempted and stopped at the explicit preflight because `cjpeg` is unavailable; `djpeg`, `jpegtran`, `pngquant`, and `oxipng` are also absent. No system packages were installed. The new Ubuntu/PHP 8.3 encoder job builds MozJPEG from upstream commit `38f37cf900958c1004c2eea945a773764ba20716`, installs Ubuntu's `pngquant`, and installs oxipng `9.1.2` with Cargo `--locked`. It has not yet run on GitHub, so real optimization is not claimed as passed. |
+| WordPress integration | Not run for this milestone | PHP 8.3, WordPress test core, and disposable database are unavailable locally. The Milestone 1.5 CI run documents the prior foundation only, not the new engine. |
+| Installable ZIP | Passed locally | After remediation, `composer install --no-dev --no-interaction --optimize-autoloader`, `php scripts/package.php`, and `composer test:package` passed; development dependencies were restored afterward. |
+| WordPress media safety | Scope review only | No upload/attachment hooks were added. Tests verify separate-output behavior with a copy adapter; no production media was accessed. |
+
+Remaining engineering limitations: IDAT decompression and JPEG entropy stream validation are performed by the actual encoder rather than the PHP structure parser; metadata validation checks detected categories, not byte-for-byte metadata equality. The engine assumes managed root directories are trusted against hostile local users because portable PHP cannot remove every path TOCTOU race. Process timeouts terminate the direct child but cannot portably guarantee termination of descendants. Actual encoder behavior, PHP 8.3 execution, the new GitHub workflow, and this revision's WordPress package integration still need verification. No GitHub workflow was run for this milestone.
+
 Status: **partially verified**. Validation performed on 2026-11-09 in the Windows development workspace. No production site, VPS, or user media was accessed.
 
 | Check | Result | Evidence / limitation |

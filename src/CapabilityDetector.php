@@ -27,10 +27,11 @@ final class CapabilityDetector {
 			'imagick'  => $this->result( $imagick, $imagick ? 'Imagick extension is loaded.' : 'Imagick extension is not loaded.' ),
 			'webp'     => $this->result( $webp, $webp ? 'A loaded PHP image library reports WebP encoding support.' : 'No loaded PHP image library reports WebP encoding support.' ),
 			'avif'     => $this->result( $avif, $avif ? 'A loaded PHP image library reports AVIF encoding support.' : 'No loaded PHP image library reports AVIF encoding support.' ),
-			'mozjpeg'  => $this->binary_result( array( 'cjpeg-moz', 'mozjpeg' ) ),
+			'mozjpeg'  => $this->binary_result( array( 'cjpeg', 'cjpeg-moz', 'mozjpeg' ) ),
+			'djpeg'    => $this->binary_result( array( 'djpeg', 'djpeg-moz' ) ),
+			'jpegtran' => $this->binary_result( array( 'jpegtran' ) ),
 			'pngquant' => $this->binary_result( array( 'pngquant' ) ),
 			'oxipng'   => $this->binary_result( array( 'oxipng' ) ),
-			'vips'     => $this->binary_result( array( 'vips' ) ),
 		);
 	}
 
