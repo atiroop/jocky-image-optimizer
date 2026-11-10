@@ -454,6 +454,7 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 			true
 		);
 		$this->assertIsInt( $attachment_id );
+		update_attached_file( $attachment_id, $source );
 		$this->test_attachment_ids[] = $attachment_id;
 		$metadata                    = array(
 			'file'       => ltrim( str_replace( wp_normalize_path( $uploads['basedir'] ) . '/', '', wp_normalize_path( $source ) ), '/' ),
