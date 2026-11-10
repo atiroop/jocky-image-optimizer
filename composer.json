@@ -24,6 +24,7 @@
   "scripts": {
     "lint": "phpcs",
     "test": "php tests/run.php",
+    "test:encoders": "php tests/encoder-integration.php",
     "test:integration": "phpunit --configuration phpunit.xml.dist",
     "test:package": "php scripts/validate-package.php"
   },

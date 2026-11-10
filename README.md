@@ -1,6 +1,6 @@
 # Jocky Image Optimizer
 
-Jocky Image Optimizer is a self-hosted WordPress plugin foundation for local image optimization. This development release implements Milestone 1 and adds Milestone 1.5 validation tooling: safe activation, settings storage, admin diagnostics, WordPress integration tests, CI, and packaging. Image processing remains unimplemented; the plugin does not alter uploads.
+Jocky Image Optimizer is a self-hosted WordPress plugin for local image optimization. This development release implements the plugin foundation, WordPress integration validation, and a developer-facing JPEG/PNG processing API. Processing is explicit and writes a separate output file; uploads, attachments, thumbnails, and metadata are not hooked or modified.
 
 ## Requirements
 
@@ -12,7 +12,7 @@ Jocky Image Optimizer is a self-hosted WordPress plugin foundation for local ima
 - Disposable MySQL 8.0/MariaDB test database for WordPress integration tests
 - A Linux server is recommended for future command-line encoder integrations. Windows is supported for development, but server encoder availability and behavior must be checked on the target Linux host.
 
-No image encoder is required to activate this milestone. The dashboard reports detected GD, Imagick, WebP/AVIF support, and selected encoder executables. It never installs system packages.
+Image processing requires locally installed `jpegtran`, `djpeg` plus MozJPEG-compatible `cjpeg`, `pngquant`, or `oxipng`, depending on the selected adapter. No encoder is required to activate the plugin. The dashboard reports detected libraries and binaries. It never installs system packages.
 
 ## Development installation
 
@@ -25,7 +25,7 @@ To produce an installable ZIP, install production dependencies as above, then ru
 
 ## Current behavior
 
-Settings are registered through the WordPress Settings API, capability-gated with `manage_options`, nonce-protected by `settings_fields()`, and sanitized on save. Worker concurrency is deliberately pinned to one. Displayed capability information comes from the running PHP process and filesystem PATH; it is not simulated. External tools are only located, never invoked in this milestone.
+Settings are registered through the WordPress Settings API, capability-gated with `manage_options`, nonce-protected by `settings_fields()`, and sanitized on save. Worker concurrency is deliberately pinned to one. Displayed capability information comes from the running PHP process and filesystem PATH; it is not simulated. `OptimizationManager` offers an explicit source-to-separate-output API with path confinement, size/pixel/time bounds, encoder argv execution without shell interpolation, output validation, no-clobber promotion, and measured result reporting. It is not connected to WordPress media hooks or admin controls.
 
 Activation adds defaults only when no settings option exists. Deactivation has no scheduled jobs to clean up. Uninstall behavior is not defined and no media, backups, or records are removed.
 
@@ -46,6 +46,8 @@ composer test:integration
 ```
 
 `composer test` contains dependency-free unit checks with WordPress API stubs. `composer test:integration` runs against a real WordPress core and disposable database; it installs and activates the generated ZIP, not the development source. See [VALIDATION.md](VALIDATION.md) for actual execution status and limitations.
+
+`composer test:encoders` runs deterministic real-image integration checks and requires `cjpeg`, `djpeg`, `jpegtran`, `pngquant`, `oxipng`, and PHP GD. The isolated `encoder-integration` GitHub job builds MozJPEG from an exact upstream commit, installs `pngquant` from Ubuntu 24.04 packages, and installs a locked oxipng release through Cargo. It does not download prebuilt encoder binaries. Run this test only on a disposable development/CI runner; it writes temporary fixtures and outputs.
 
 ### Local WordPress integration setup
 
@@ -70,7 +72,7 @@ The installer puts WordPress core and test files under `TMPDIR`; remove that uni
 
 ## Security and scope
 
-This release does not execute shell commands or accept file paths. Do not treat configured format/quality settings as active processing controls until a later milestone implements and verifies those behaviors. Cloudflare R2, bulk jobs, upload hooks, backups/restoration, and image processing are deferred.
+The processing API executes only known local encoder binaries when explicitly called. It does not use shell command strings, auto-install tools, or accept executable paths from request data. Lossy adapters require metadata preservation to be disabled because they cannot guarantee retention. APNG is rejected. Cloudflare R2, bulk jobs, upload hooks, backups/restoration, and automatic media mutation remain deferred.
 
 ## License
 

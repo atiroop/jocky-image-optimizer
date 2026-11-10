@@ -1,5 +1,17 @@
 # Changelog
 
+## Milestone 2 — 2026-11-10
+
+- Added an explicit local JPEG/PNG optimization API with lossless jpegtran/oxipng and lossy MozJPEG/pngquant adapters.
+- Added path confinement, bounded inputs and dimensions, time-limited argv-based processes, temporary-file cleanup, post-encode validation, and no-clobber output promotion.
+- Rejects APNG and lossy metadata-preserving requests; no WordPress media hooks or attachment mutations were added.
+- Added PNG CRC/order/corruption tests, private temporary staging, and reproducible real-encoder integration coverage in CI. GitHub CI has not yet run for these changes.
+
+## Milestone 2 remediation — 2026-11-10
+
+- Reduced WPCS from 215 errors and 34 warnings to 0 errors and 0 warnings; added justified scoped exceptions for native streaming I/O, atomic no-clobber promotion, and argv-based process launching.
+- Added an Ubuntu 24.04/PHP 8.3 encoder job using pinned MozJPEG source, Ubuntu pngquant, and locked oxipng, plus real JPEG/PNG, alpha, failure, timeout, cleanup, and source-preservation tests.
+
 ## Workflow repair — 2026-11-09
 
 - Fixed the WordPress integration workflow's pre-job validation error by moving `runner.temp` expressions from job-level to step-level environment configuration.

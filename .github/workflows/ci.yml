@@ -80,3 +80,43 @@ jobs:
           WP_TESTS_DIR: ${{ runner.temp }}/jio-wp-tests/wordpress-tests-lib
           JIO_PACKAGE_PATH: ${{ github.workspace }}/build/jocky-image-optimizer-0.1.0-dev.zip
         run: composer test:integration
+  encoder-integration:
+    runs-on: ubuntu-24.04
+    needs: static-and-unit
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
+        with:
+          php-version: '8.3'
+          extensions: gd, mbstring, mysqli, xml, zip
+          tools: composer:v2
+      - name: Install trusted Ubuntu build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y build-essential cmake libpng-dev nasm pkg-config rustc cargo
+      - name: Build pinned MozJPEG source
+        run: |
+          set -euo pipefail
+          git clone https://github.com/mozilla/mozjpeg.git "$RUNNER_TEMP/mozjpeg-src"
+          git -C "$RUNNER_TEMP/mozjpeg-src" checkout 38f37cf900958c1004c2eea945a773764ba20716
+          cmake -S "$RUNNER_TEMP/mozjpeg-src" -B "$RUNNER_TEMP/mozjpeg-build" -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/mozjpeg-install" -DENABLE_SHARED=FALSE
+          cmake --build "$RUNNER_TEMP/mozjpeg-build" --parallel 2
+          cmake --install "$RUNNER_TEMP/mozjpeg-build"
+          echo "$RUNNER_TEMP/mozjpeg-install/bin" >> "$GITHUB_PATH"
+      - name: Install pngquant and pinned oxipng
+        run: |
+          set -euo pipefail
+          sudo apt-get install --no-install-recommends -y pngquant
+          cargo install oxipng --version 9.1.2 --locked --jobs 2 --root "$RUNNER_TEMP/oxipng"
+          echo "$RUNNER_TEMP/oxipng/bin" >> "$GITHUB_PATH"
+      - name: Install PHP development dependencies
+        run: composer install --no-interaction --prefer-dist
+      - name: Verify installed encoders and run real fixture integration tests
+        run: |
+          cjpeg -version
+          djpeg -version
+          jpegtran -version
+          pngquant --version
+          oxipng --version
+          composer test:encoders

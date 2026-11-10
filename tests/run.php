@@ -13,6 +13,37 @@ use Jocky\ImageOptimizer\CapabilityDetector;
 use Jocky\ImageOptimizer\Admin\AdminPages;
 use Jocky\ImageOptimizer\Plugin;
 use Jocky\ImageOptimizer\Settings;
+use Jocky\ImageOptimizer\Optimization\EncoderExecution;
+use Jocky\ImageOptimizer\Optimization\EncoderInterface;
+use Jocky\ImageOptimizer\Optimization\EncoderRegistry;
+use Jocky\ImageOptimizer\Optimization\ImageValidator;
+use Jocky\ImageOptimizer\Optimization\OptimizationManager;
+use Jocky\ImageOptimizer\Optimization\OptimizationRequest;
+use Jocky\ImageOptimizer\Optimization\PathGuard;
+use Jocky\ImageOptimizer\Optimization\SafeFileReplacer;
+use Jocky\ImageOptimizer\Optimization\TemporaryFileManager;
+use Jocky\ImageOptimizer\System\ProcessRunner;
+
+final class TestCopyEncoder implements EncoderInterface {
+	public function id(): string { return 'test-copy'; }
+	public function supported_mime_types(): array { return array( 'image/png' ); }
+	public function supported_modes(): array { return array( OptimizationRequest::MODE_LOSSLESS ); }
+	public function is_available(): bool { return true; }
+	public function optimize( string $source_path, string $temporary_output_path, OptimizationRequest $request ): EncoderExecution {
+		copy( $source_path, $temporary_output_path );
+		return new EncoderExecution( EncoderExecution::COMPLETE );
+	}
+}
+
+/** Builds a deterministic RGBA PNG fixture with valid chunk checksums. */
+$build_png = static function (): string {
+	$chunk = static function ( string $type, string $data ): string {
+		return pack( 'N', strlen( $data ) ) . $type . $data . pack( 'H*', hash( 'crc32b', $type . $data ) );
+	};
+	$ihdr = pack( 'NNCCCCC', 1, 1, 8, 6, 0, 0, 0 );
+	$idat = gzcompress( "\0\xff\0\0\0" );
+	return "\x89PNG\r\n\x1a\n" . $chunk( 'IHDR', $ihdr ) . $chunk( 'IDAT', $idat ) . $chunk( 'IEND', '' );
+};
 
 $testOptions = array();
 $test_hooks = array();
@@ -106,5 +137,66 @@ $assert( $test_menu_pages['jocky-image-optimizer-settings'] === 'manage_options'
 $sanitizer = $test_registered_settings[ Plugin::OPTION_NAME ]['sanitize_callback'];
 $testOptions[ Plugin::OPTION_NAME ] = call_user_func( $sanitizer, array( 'output_format' => 'webp', 'image_quality' => 74 ) );
 $assert( $testOptions[ Plugin::OPTION_NAME ]['output_format'] === 'webp' && $testOptions[ Plugin::OPTION_NAME ]['image_quality'] === 74, 'registered Settings API sanitizer persists valid settings' );
+
+$fixture_root = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'jio-test-' . bin2hex( random_bytes( 6 ) );
+mkdir( $fixture_root, 0700 );
+$png_path = $fixture_root . DIRECTORY_SEPARATOR . 'source.png';
+$png_data = $build_png();
+file_put_contents( $png_path, $png_data );
+$request = new OptimizationRequest( $png_path, $fixture_root . DIRECTORY_SEPARATOR . 'result.png', 'test-copy', OptimizationRequest::MODE_LOSSLESS );
+$image_info = ( new ImageValidator() )->inspect( $png_path, $request );
+$assert( 'image/png' === $image_info->mime && 1 === $image_info->width && 1 === $image_info->height, 'PNG structure and dimensions are validated without image extensions' );
+$assert( isset( $image_info->metadata['transparency'] ) || 6 === ord( $png_data[25] ), 'RGBA PNG fixture retains its alpha-capable color type' );
+$actl_data = pack( 'NN', 1, 0 );
+$actl_chunk = pack( 'N', strlen( $actl_data ) ) . 'acTL' . $actl_data . pack( 'H*', hash( 'crc32b', 'acTL' . $actl_data ) );
+$apng_path = $fixture_root . DIRECTORY_SEPARATOR . 'animated.png';
+file_put_contents( $apng_path, substr( $png_data, 0, 33 ) . $actl_chunk . substr( $png_data, 33 ) );
+$apng_info = ( new ImageValidator() )->inspect( $apng_path, $request );
+$assert( $apng_info->animated, 'valid APNG animation control chunks are detected' );
+$invalid_pngs = array(
+	'bad-crc.png' => substr_replace( $png_data, "\x00", 41, 1 ),
+	'truncated.png' => substr( $png_data, 0, -3 ),
+	'bad-structure.png' => substr_replace( $png_data, 'JUNK', 12, 4 ),
+	'unsupported.bin' => 'plain text is not an image',
+	'empty.png' => '',
+);
+foreach ( $invalid_pngs as $name => $data ) {
+	$invalid_path = $fixture_root . DIRECTORY_SEPARATOR . $name;
+	file_put_contents( $invalid_path, $data );
+	try {
+		( new ImageValidator() )->inspect( $invalid_path, $request );
+		$assert( false, sprintf( '%s is rejected as invalid image data', $name ) );
+	} catch ( \Jocky\ImageOptimizer\Optimization\OptimizationException $exception ) {
+		$expected_category = 'bad-crc.png' === $name ? 'png_crc_mismatch' : ( 'unsupported.bin' === $name ? 'unsupported_format' : ( 'empty.png' === $name ? 'input_size_limit' : 'invalid_image' ) );
+		$assert( $expected_category === $exception->category, sprintf( '%s is rejected with the expected integrity category', $name ) );
+	}
+	unlink( $invalid_path );
+}
+$manager = new OptimizationManager( new PathGuard( array( $fixture_root ) ), new ImageValidator(), new EncoderRegistry( array( new TestCopyEncoder() ) ), new TemporaryFileManager(), new SafeFileReplacer() );
+$result = $manager->optimize( $request );
+$assert( 'skipped' === $result->status && 'no_size_benefit' === $result->error_category, 'equal-size output is skipped and not promoted' );
+$source_hash = hash_file( 'sha256', $png_path );
+$assert( ! file_exists( $request->destination_path ) && $source_hash === hash_file( 'sha256', $png_path ), 'no-benefit handling retains the source and leaves destination absent' );
+$outside_request = new OptimizationRequest( $png_path, dirname( $fixture_root ) . DIRECTORY_SEPARATOR . 'outside.png', 'test-copy', OptimizationRequest::MODE_LOSSLESS );
+$outside_result = $manager->optimize( $outside_request );
+$assert( 'failed' === $outside_result->status && 'path_outside_root' === $outside_result->error_category, 'destination paths outside configured roots are rejected' );
+if ( function_exists( 'proc_open' ) ) {
+	$process_runner = new ProcessRunner();
+	$failed_process = $process_runner->run( PHP_BINARY, array( '-r', 'exit(7);' ), 5.0 );
+	$assert( 7 === $failed_process->exit_code, 'process runner returns the child exit status without shell interpolation' );
+	$captured_process = $process_runner->run( PHP_BINARY, array( '-r', 'fwrite(STDOUT, "captured"); fwrite(STDERR, "diagnostic");' ), 5.0 );
+	$assert( 'captured' === $captured_process->stdout && 'diagnostic' === $captured_process->stderr, 'process runner captures bounded stdout and stderr' );
+	try {
+		$process_runner->run( PHP_BINARY, array( '-r', 'usleep(3000000);' ), 1.0 );
+		$assert( false, 'process runner terminates a child that exceeds its timeout' );
+	} catch ( \Jocky\ImageOptimizer\Optimization\OptimizationException $exception ) {
+		$assert( 'encoder_timeout' === $exception->category, 'process runner terminates a child that exceeds its timeout' );
+	}
+} else {
+	echo "SKIP: process runner checks (proc_open is disabled)\n";
+}
+unlink( $png_path );
+unlink( $apng_path );
+rmdir( $fixture_root );
 
 exit( $failures === 0 ? 0 : 1 );
