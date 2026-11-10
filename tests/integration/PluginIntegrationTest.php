@@ -167,6 +167,53 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 		$this->assertSame( '', $wpdb->last_error );
 	}
 
+	public function test_partial_schema_migration_retries_missing_table_without_losing_existing_queue_rows(): void {
+		global $wpdb;
+		$primary            = $wpdb;
+		$secondary          = new wpdb( DB_USER, DB_PASSWORD, DB_NAME, DB_HOST );
+		$secondary->prefix  = 'jio_mig_' . bin2hex( random_bytes( 4 ) ) . '_';
+		$secondary->options = $primary->options;
+		$prefix             = $secondary->prefix;
+		$original_version   = (int) get_option( QueueSchema::OPTION, 0 );
+		$job_key            = hash( 'sha256', random_bytes( 32 ) );
+		$now                = current_time( 'mysql', true );
+		try {
+			$GLOBALS['wpdb'] = $secondary;
+			QueueSchema::install();
+			$jobs_table    = QueueSchema::jobs_table();
+			$cleanup_table = QueueSchema::cleanup_table();
+			$this->assertNotFalse(
+				$secondary->insert(
+					$jobs_table,
+					array(
+						'attachment_id'      => 0,
+						'variant_key'        => 'partial-migration-test',
+						'output_format'      => 'image/webp',
+						'source_fingerprint' => str_repeat( 'b', 64 ),
+						'job_key'            => $job_key,
+						'status'             => 'pending',
+						'available_at'       => $now,
+						'created_at'         => $now,
+						'updated_at'         => $now,
+					),
+					array( '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s' )
+				)
+			);
+			$this->assertNotFalse( $secondary->query( "DROP TABLE {$cleanup_table}" ), 'the isolated disposable prefix simulates a partial migration' );
+			update_option( QueueSchema::OPTION, QueueSchema::VERSION - 1, false );
+			QueueSchema::maybe_install();
+			$this->assertSame( $cleanup_table, $secondary->get_var( $secondary->prepare( 'SHOW TABLES LIKE %s', $cleanup_table ) ) );
+			$this->assertSame( $job_key, $secondary->get_var( $secondary->prepare( "SELECT job_key FROM {$jobs_table} WHERE job_key = %s", $job_key ) ), 'retry preserves rows from tables already present before the incomplete migration' );
+		} finally {
+			$GLOBALS['wpdb'] = $secondary;
+			update_option( QueueSchema::OPTION, $original_version, false );
+			foreach ( array( 'jio_jobs', 'jio_worker_slots', 'jio_derivatives', 'jio_recovery_events', 'jio_cleanup_batches' ) as $suffix ) {
+				$secondary->query( 'DROP TABLE IF EXISTS ' . $prefix . $suffix );
+			}
+			$GLOBALS['wpdb'] = $primary;
+		}
+	}
+
 	public function test_bulk_scanner_normalizes_legacy_partial_progress_state(): void {
 		$scanner = new BulkScanner( $this->jobs, new QueueWorker( $this->jobs ) );
 		update_option( BulkScanner::STATE, array( 'status' => 'scanning', 'last_id' => '12' ) );
@@ -254,6 +301,52 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 		wp_set_current_user( self::factory()->user->create( array( 'role' => 'subscriber' ) ) );
 		$this->expectException( WPDieException::class );
 		( new AdminPages( new CapabilityDetector(), $this->jobs ) )->handle_attachment_cleanup();
+	}
+
+	public function test_recovery_cleanup_request_rejects_invalid_nonce_id_and_missing_confirmation_before_filesystem_changes(): void {
+		$this->set_output_format( 'webp' );
+		[ $attachment_id, $source ] = $this->create_png_attachment( 'admin-request-safety', false );
+		$this->assertSame( 1, $this->jobs->enqueue_many( ( new AttachmentJobFactory() )->jobs_for_attachment( $attachment_id ) ) );
+		$this->assertSame( 1, ( new QueueWorker( $this->jobs ) )->run_batch( 1 )['completed'] );
+		$derivative = preg_replace( '/\\.png$/', '.jio.webp', $source );
+		$this->assertFileExists( $derivative );
+		$derivative_hash = hash_file( 'sha256', $derivative );
+		$original_post   = $_POST;
+		$admin_id        = self::factory()->user->create( array( 'role' => 'administrator' ) );
+		$handler         = new AdminPages( new CapabilityDetector(), $this->jobs );
+		$valid_nonce     = wp_create_nonce( 'jio_recovery_cleanup_' . $attachment_id );
+		$requests        = array(
+			'missing_nonce' => array( 'attachment_id' => (string) $attachment_id, 'confirm_cleanup' => '1' ),
+			'invalid_nonce' => array( 'attachment_id' => (string) $attachment_id, 'confirm_cleanup' => '1', '_wpnonce' => 'invalid' ),
+			'no_confirmation' => array( 'attachment_id' => (string) $attachment_id, '_wpnonce' => $valid_nonce ),
+			'invalid_attachment' => array( 'attachment_id' => '999999999', 'confirm_cleanup' => '1', '_wpnonce' => wp_create_nonce( 'jio_recovery_cleanup_999999999' ) ),
+		);
+		try {
+			wp_set_current_user( $admin_id );
+			foreach ( $requests as $request ) {
+				$_POST = $request;
+				try {
+					$handler->handle_attachment_cleanup();
+					$this->fail( 'Invalid destructive request unexpectedly returned.' );
+				} catch ( WPDieException $exception ) {
+					$this->assertNotEmpty( $exception->getMessage() );
+				}
+				$this->assertFileExists( $derivative );
+				$this->assertSame( $derivative_hash, hash_file( 'sha256', $derivative ) );
+			}
+			wp_set_current_user( self::factory()->user->create( array( 'role' => 'subscriber' ) ) );
+			$_POST = array( 'attachment_id' => (string) $attachment_id, 'confirm_cleanup' => '1', '_wpnonce' => $valid_nonce );
+			try {
+				$handler->handle_attachment_cleanup();
+				$this->fail( 'A non-administrator request unexpectedly returned.' );
+			} catch ( WPDieException $exception ) {
+				$this->assertNotEmpty( $exception->getMessage() );
+			}
+			$this->assertFileExists( $derivative );
+		} finally {
+			$_POST = $original_post;
+			wp_set_current_user( 0 );
+		}
 	}
 
 	public function test_admin_menu_settings_nonce_and_authorized_page_rendering(): void {
@@ -510,6 +603,9 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 		$second_cleanup = $service->cleanup_attachment( $attachment_id, true, (int) $first_cleanup['next_after_id'] );
 		$this->assertSame( 'complete', $second_cleanup['status'] );
 		$this->assertSame( 1, $second_cleanup['cleaned'] );
+		$repeated_cleanup = $service->cleanup_attachment( $attachment_id, true );
+		$this->assertSame( 'complete', $repeated_cleanup['status'] );
+		$this->assertSame( 0, $repeated_cleanup['cleaned'], 'repeating a completed cleanup is harmless' );
 		$this->assertFileExists( $source );
 		$this->assertFileExists( $thumbnail );
 		$this->assertSame( $source_hash, hash_file( 'sha256', $source ) );
@@ -544,6 +640,82 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 		$this->assertFileExists( $derivative, 'missing source must block cleanup' );
 		file_put_contents( $source, $source_bytes );
 		$this->assertNotFalse( $source_bytes );
+	}
+
+	public function test_cleanup_database_failures_keep_the_operation_tracked_and_never_report_false_success(): void {
+		global $wpdb;
+		$this->set_output_format( 'webp' );
+		[ $attachment_id, $source ] = $this->create_png_attachment( 'recovery-db-failure', false );
+		$source_hash                = hash_file( 'sha256', $source );
+		$this->assertSame( 1, $this->jobs->enqueue_many( ( new AttachmentJobFactory() )->jobs_for_attachment( $attachment_id ) ) );
+		$this->assertSame( 1, ( new QueueWorker( $this->jobs ) )->run_batch( 1 )['completed'] );
+		$derivative = preg_replace( '/\\.png$/', '.jio.webp', $source );
+		$this->assertFileExists( $derivative );
+		$registry = QueueSchema::derivatives_table();
+		$row      = (array) $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$registry} WHERE attachment_id = %d LIMIT 1", $attachment_id ), ARRAY_A );
+		$this->assertNotEmpty( $row );
+
+		// A failed registry insert is surfaced as failure and leaves prior ownership intact.
+		$fail_insert = static function ( string $query ) use ( $registry ): string {
+			if ( str_starts_with( $query, "INSERT INTO {$registry} " ) ) {
+				return "UPDATE {$registry} SET missing_column = 1";
+			}
+			return $query;
+		};
+		add_filter( 'query', $fail_insert, 999 );
+		$this->assertFalse( ( new \Jocky\ImageOptimizer\Recovery\DerivativeRepository() )->record( $row ) );
+		remove_filter( 'query', $fail_insert, 999 );
+		$this->assertSame( 1, (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$registry} WHERE attachment_id = %d", $attachment_id ) ) );
+		// If the pre-unlink state transition fails, cleanup must not touch the file.
+		$fail_removing = static function ( string $query ) use ( $registry ): string {
+			if ( str_contains( $query, "UPDATE {$registry} SET lifecycle_status = 'removing'" ) ) {
+				return "UPDATE {$registry} SET missing_column = 1";
+			}
+			return $query;
+		};
+		add_filter( 'query', $fail_removing, 999 );
+		$this->assertSame( 'conflict', ( new RecoveryService() )->cleanup_attachment( $attachment_id, true )['status'] );
+		remove_filter( 'query', $fail_removing, 999 );
+		$this->assertFileExists( $derivative );
+		$this->assertSame( $source_hash, hash_file( 'sha256', $source ) );
+
+		// A post-unlink registry failure is not reported as success; the row becomes a visible conflict.
+		$fail_cleaned = static function ( string $query ) use ( $registry ): string {
+			if ( str_contains( $query, "SET validation_status = 'cleaned', lifecycle_status = 'cleaned'" ) ) {
+				return "UPDATE {$registry} SET missing_column = 1";
+			}
+			return $query;
+		};
+		add_filter( 'query', $fail_cleaned, 999 );
+		$result = ( new RecoveryService() )->cleanup_attachment( $attachment_id, true );
+		remove_filter( 'query', $fail_cleaned, 999 );
+		$this->assertSame( 'conflict', $result['status'] );
+		$this->assertSame( 0, $result['cleaned'] );
+		$this->assertFileDoesNotExist( $derivative );
+		$this->assertSame( $source_hash, hash_file( 'sha256', $source ) );
+		$this->assertSame( 'conflict', $wpdb->get_var( $wpdb->prepare( "SELECT lifecycle_status FROM {$registry} WHERE attachment_id = %d LIMIT 1", $attachment_id ) ) );
+
+		// An audit write failure after successful registry/file cleanup is also surfaced as a conflict.
+		[ $audit_attachment_id, $audit_source ] = $this->create_png_attachment( 'recovery-audit-failure', false );
+		$audit_source_hash                     = hash_file( 'sha256', $audit_source );
+		$this->assertSame( 1, $this->jobs->enqueue_many( ( new AttachmentJobFactory() )->jobs_for_attachment( $audit_attachment_id ) ) );
+		$this->assertSame( 1, ( new QueueWorker( $this->jobs ) )->run_batch( 1 )['completed'] );
+		$audit_derivative = preg_replace( '/\\.png$/', '.jio.webp', $audit_source );
+		$events            = QueueSchema::events_table();
+		$fail_audit        = static function ( string $query ) use ( $events ): string {
+			if ( str_starts_with( $query, "INSERT INTO {$events} " ) && str_contains( $query, "'cleanup','cleaned'" ) ) {
+				return "UPDATE {$events} SET missing_column = 1";
+			}
+			return $query;
+		};
+		add_filter( 'query', $fail_audit, 999 );
+		$audit_result = ( new RecoveryService() )->cleanup_attachment( $audit_attachment_id, true );
+		remove_filter( 'query', $fail_audit, 999 );
+		$this->assertSame( 'conflict', $audit_result['status'] );
+		$this->assertSame( 0, $audit_result['cleaned'] );
+		$this->assertFileDoesNotExist( $audit_derivative );
+		$this->assertSame( $audit_source_hash, hash_file( 'sha256', $audit_source ) );
+		$this->assertSame( 'cleaned', $wpdb->get_var( $wpdb->prepare( "SELECT lifecycle_status FROM {$registry} WHERE attachment_id = %d LIMIT 1", $audit_attachment_id ) ) );
 	}
 
 	public function test_persistent_bulk_cleanup_batch_processes_bounded_pages_and_preserves_source(): void {
@@ -653,6 +825,65 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 		$this->assertFalse( $this->jobs->finish( (int) $first['id'], $second_token, 'completed', 1, 1 ) );
 		$this->assertTrue( $this->jobs->finish( (int) $first['id'], $first_token, 'completed', 1, 1 ) );
 		$this->assertTrue( $this->jobs->finish( (int) $second['id'], $second_token, 'completed', 1, 1 ) );
+	}
+
+	public function test_independent_database_connections_cannot_claim_the_same_job(): void {
+		global $wpdb;
+		$primary          = $wpdb;
+		$secondary        = new wpdb( DB_USER, DB_PASSWORD, DB_NAME, DB_HOST );
+		$secondary->prefix = $primary->prefix;
+		$table            = QueueSchema::jobs_table();
+		$job_key          = hash( 'sha256', random_bytes( 32 ) );
+		$now              = current_time( 'mysql', true );
+		$this->assertNotFalse(
+			$secondary->insert(
+				$table,
+				array(
+					'attachment_id'     => 0,
+					'variant_key'       => 'independent-connection-test',
+					'output_format'     => 'image/webp',
+					'source_fingerprint' => str_repeat( 'a', 64 ),
+					'job_key'            => $job_key,
+					'status'             => 'pending',
+					'available_at'       => $now,
+					'created_at'         => $now,
+					'updated_at'         => $now,
+				),
+				array( '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s' )
+			)
+		);
+		$job_id       = (int) $secondary->insert_id;
+		$first_token  = bin2hex( random_bytes( 16 ) );
+		$second_token = bin2hex( random_bytes( 16 ) );
+		$GLOBALS['wpdb'] = $secondary;
+		try {
+			$first = ( new JobRepository() )->claim_next( $first_token );
+		} finally {
+			$GLOBALS['wpdb'] = $primary;
+		}
+		$this->assertIsArray( $first );
+		$this->assertSame( $job_id, (int) $first['id'] );
+		$second = $this->jobs->claim_next( $second_token );
+		$secondary->delete( $table, array( 'id' => $job_id ), array( '%d' ) );
+		$this->assertNull( $second, 'the conditional UPDATE gives the pending row to only one database connection' );
+	}
+
+	public function test_attachment_operation_lock_is_exclusive_across_database_connections_and_releases(): void {
+		global $wpdb;
+		[ $attachment_id ] = $this->create_png_attachment( 'operation-lock', false );
+		$primary       = $wpdb;
+		$secondary     = new wpdb( DB_USER, DB_PASSWORD, DB_NAME, DB_HOST );
+		$secondary->prefix   = $primary->prefix;
+		$lock_name           = 'jio_' . substr( hash( 'sha256', $primary->prefix . ':' . $attachment_id ), 0, 48 );
+		$this->assertSame( '1', (string) $secondary->get_var( $secondary->prepare( 'SELECT GET_LOCK(%s, 0)', $lock_name ) ) );
+		$lock = new AttachmentOperationLock();
+		$this->assertFalse( $lock->acquire( $attachment_id ), 'another connection holding the same lock blocks plugin cleanup/optimization' );
+		$secondary->get_var( $secondary->prepare( 'SELECT RELEASE_LOCK(%s)', $lock_name ) );
+		$this->assertTrue( $lock->acquire( $attachment_id ) );
+		$lock->release( $attachment_id );
+		$this->assertTrue( $lock->acquire( $attachment_id ), 'released lock can be reacquired' );
+		$lock->release( $attachment_id );
+		$this->assertFalse( $lock->acquire( 0 ), 'invalid attachment IDs never acquire an operation lock' );
 	}
 
 	public function test_bulk_scan_uses_bounded_keyset_pages_and_persists_progress(): void {

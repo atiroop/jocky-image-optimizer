@@ -202,9 +202,18 @@ final class RecoveryService {
 					++$conflicts;
 					continue;
 				}
-				$this->records->set_status( $id, 'cleaned', 'cleaned' );
+				if ( ! $this->records->set_status( $id, 'cleaned', 'cleaned' ) ) {
+					// Keep the registry candidate visible for a later inspection of the missing file.
+					$this->records->set_status( $id, 'conflict', 'conflict' );
+					$this->records->audit( $attachment_id, $id, 'cleanup', 'conflict', array( 'reason' => 'registry_update_failed_after_unlink' ) );
+					++$conflicts;
+					continue;
+				}
 				$this->remove_owned_postmeta( $attachment_id, $entry );
-				$this->records->audit( $attachment_id, $id, 'cleanup', 'cleaned', array( 'bytes' => (int) $entry['output_bytes'] ) );
+				if ( ! $this->records->audit( $attachment_id, $id, 'cleanup', 'cleaned', array( 'bytes' => (int) $entry['output_bytes'] ) ) ) {
+					++$conflicts;
+					continue;
+				}
 				++$cleaned;
 				$next_after_id = $id;
 				break;
@@ -283,7 +292,12 @@ final class RecoveryService {
 		}
 		$rows = $repository->cleanup_page( (int) $batch['last_derivative_id'], $limit );
 		if ( array() === $rows ) {
-			$repository->complete_cleanup( $batch_id );
+			if ( ! $repository->complete_cleanup( $batch_id ) ) {
+				return array(
+					'status'    => 'state_update_failed',
+					'processed' => 0,
+				);
+			}
 			return array(
 				'status'    => 'complete',
 				'processed' => 0,
@@ -293,7 +307,12 @@ final class RecoveryService {
 		foreach ( $rows as $record ) {
 			$attachment_id = (int) $record['attachment_id'];
 			$result        = $this->cleanup_record( $record );
-			$repository->advance_cleanup( $batch_id, (int) $record['id'], 'cleaned' === $result, 'cleaned' !== $result );
+			if ( ! $repository->advance_cleanup( $batch_id, (int) $record['id'], 'cleaned' === $result, 'cleaned' !== $result ) ) {
+				return array(
+					'status'    => 'state_update_failed',
+					'processed' => $processed,
+				);
+			}
 			++$processed;
 		}
 		return array(
@@ -454,9 +473,15 @@ final class RecoveryService {
 				$this->records->audit( $attachment_id, (int) $record['id'], 'bulk_cleanup', 'conflict', array( 'reason' => 'file_changed_or_unlink_failed' ) );
 				return 'conflict';
 			}
-			$this->records->set_status( (int) $record['id'], 'cleaned', 'cleaned' );
+			if ( ! $this->records->set_status( (int) $record['id'], 'cleaned', 'cleaned' ) ) {
+				$this->records->set_status( (int) $record['id'], 'conflict', 'conflict' );
+				$this->records->audit( $attachment_id, (int) $record['id'], 'bulk_cleanup', 'conflict', array( 'reason' => 'registry_update_failed_after_unlink' ) );
+				return 'conflict';
+			}
 			$this->remove_owned_postmeta( $attachment_id, $record );
-			$this->records->audit( $attachment_id, (int) $record['id'], 'bulk_cleanup', 'cleaned', array( 'bytes' => (int) $record['output_bytes'] ) );
+			if ( ! $this->records->audit( $attachment_id, (int) $record['id'], 'bulk_cleanup', 'cleaned', array( 'bytes' => (int) $record['output_bytes'] ) ) ) {
+				return 'conflict';
+			}
 			return 'cleaned';
 		} finally {
 			$this->lock->release( $attachment_id );
