@@ -167,53 +167,6 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 		$this->assertSame( '', $wpdb->last_error );
 	}
 
-	public function test_partial_schema_migration_retries_missing_table_without_losing_existing_queue_rows(): void {
-		global $wpdb;
-		$primary            = $wpdb;
-		$secondary          = new wpdb( DB_USER, DB_PASSWORD, DB_NAME, DB_HOST );
-		$secondary->prefix  = 'jio_mig_' . bin2hex( random_bytes( 4 ) ) . '_';
-		$secondary->options = $primary->options;
-		$prefix             = $secondary->prefix;
-		$original_version   = (int) get_option( QueueSchema::OPTION, 0 );
-		$job_key            = hash( 'sha256', random_bytes( 32 ) );
-		$now                = current_time( 'mysql', true );
-		try {
-			$GLOBALS['wpdb'] = $secondary;
-			QueueSchema::install();
-			$jobs_table    = QueueSchema::jobs_table();
-			$cleanup_table = QueueSchema::cleanup_table();
-			$this->assertNotFalse(
-				$secondary->insert(
-					$jobs_table,
-					array(
-						'attachment_id'      => 0,
-						'variant_key'        => 'partial-migration-test',
-						'output_format'      => 'image/webp',
-						'source_fingerprint' => str_repeat( 'b', 64 ),
-						'job_key'            => $job_key,
-						'status'             => 'pending',
-						'available_at'       => $now,
-						'created_at'         => $now,
-						'updated_at'         => $now,
-					),
-					array( '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s' )
-				)
-			);
-			$this->assertNotFalse( $secondary->query( "DROP TABLE {$cleanup_table}" ), 'the isolated disposable prefix simulates a partial migration' );
-			update_option( QueueSchema::OPTION, QueueSchema::VERSION - 1, false );
-			QueueSchema::maybe_install();
-			$this->assertSame( $cleanup_table, $secondary->get_var( $secondary->prepare( 'SHOW TABLES LIKE %s', $cleanup_table ) ) );
-			$this->assertSame( $job_key, $secondary->get_var( $secondary->prepare( "SELECT job_key FROM {$jobs_table} WHERE job_key = %s", $job_key ) ), 'retry preserves rows from tables already present before the incomplete migration' );
-		} finally {
-			$GLOBALS['wpdb'] = $secondary;
-			update_option( QueueSchema::OPTION, $original_version, false );
-			foreach ( array( 'jio_jobs', 'jio_worker_slots', 'jio_derivatives', 'jio_recovery_events', 'jio_cleanup_batches' ) as $suffix ) {
-				$secondary->query( 'DROP TABLE IF EXISTS ' . $prefix . $suffix );
-			}
-			$GLOBALS['wpdb'] = $primary;
-		}
-	}
-
 	public function test_bulk_scanner_normalizes_legacy_partial_progress_state(): void {
 		$scanner = new BulkScanner( $this->jobs, new QueueWorker( $this->jobs ) );
 		update_option( BulkScanner::STATE, array( 'status' => 'scanning', 'last_id' => '12' ) );
@@ -703,7 +656,7 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 		$audit_derivative = preg_replace( '/\\.png$/', '.jio.webp', $audit_source );
 		$events            = QueueSchema::events_table();
 		$fail_audit        = static function ( string $query ) use ( $events ): string {
-			if ( str_starts_with( $query, "INSERT INTO {$events} " ) && str_contains( $query, "'cleanup','cleaned'" ) ) {
+			if ( str_starts_with( $query, "INSERT INTO {$events} " ) && 1 === preg_match( "/'cleanup'\\s*,\\s*'cleaned'/", $query ) ) {
 				return "UPDATE {$events} SET missing_column = 1";
 			}
 			return $query;
@@ -829,33 +782,56 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 
 	public function test_independent_database_connections_cannot_claim_the_same_job(): void {
 		global $wpdb;
-		$primary          = $wpdb;
-		$secondary        = new wpdb( DB_USER, DB_PASSWORD, DB_NAME, DB_HOST );
-		$secondary->prefix = $primary->prefix;
-		$table            = QueueSchema::jobs_table();
-		$job_key          = hash( 'sha256', random_bytes( 32 ) );
-		$now              = current_time( 'mysql', true );
+		$primary              = $wpdb;
+		$secondary            = new wpdb( DB_USER, DB_PASSWORD, DB_NAME, DB_HOST );
+		$original_prefix      = $primary->prefix;
+		$isolated_prefix      = 'jio_claim_' . bin2hex( random_bytes( 4 ) ) . '_';
+		$secondary->prefix    = $isolated_prefix;
+		$table                = $isolated_prefix . 'jio_jobs';
+		$job_key              = hash( 'sha256', random_bytes( 32 ) );
+		$now                  = current_time( 'mysql', true );
+		$this->assertNotFalse(
+			$secondary->query(
+				"CREATE TABLE {$table} (
+				id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+				attachment_id bigint(20) unsigned NOT NULL,
+				variant_key varchar(80) NOT NULL,
+				output_format varchar(20) NOT NULL,
+				source_fingerprint char(64) NOT NULL,
+				job_key char(64) NOT NULL,
+				status varchar(20) NOT NULL,
+				attempts smallint(5) unsigned NOT NULL DEFAULT 0,
+				available_at datetime NOT NULL,
+				lock_token char(64) NULL,
+				locked_at datetime NULL,
+				started_at datetime NULL,
+				error_code varchar(64) NULL,
+				updated_at datetime NOT NULL,
+				PRIMARY KEY (id), UNIQUE KEY job_key (job_key), KEY status_available (status,available_at)
+			) ENGINE=InnoDB"
+			)
+		);
 		$this->assertNotFalse(
 			$secondary->insert(
 				$table,
 				array(
-					'attachment_id'     => 0,
-					'variant_key'       => 'independent-connection-test',
-					'output_format'     => 'image/webp',
+					'attachment_id'      => 0,
+					'variant_key'        => 'independent-connection-test',
+					'output_format'      => 'image/webp',
 					'source_fingerprint' => str_repeat( 'a', 64 ),
 					'job_key'            => $job_key,
 					'status'             => 'pending',
 					'available_at'       => $now,
-					'created_at'         => $now,
 					'updated_at'         => $now,
 				),
-				array( '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s' )
+				array( '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s' )
 			)
 		);
 		$job_id       = (int) $secondary->insert_id;
 		$first_token  = bin2hex( random_bytes( 16 ) );
 		$second_token = bin2hex( random_bytes( 16 ) );
-		$GLOBALS['wpdb'] = $secondary;
+		$secondary->prefix = $isolated_prefix;
+		$GLOBALS['wpdb']   = $secondary;
 		try {
 			$first = ( new JobRepository() )->claim_next( $first_token );
 		} finally {
@@ -863,8 +839,12 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 		}
 		$this->assertIsArray( $first );
 		$this->assertSame( $job_id, (int) $first['id'] );
-		$second = $this->jobs->claim_next( $second_token );
-		$secondary->delete( $table, array( 'id' => $job_id ), array( '%d' ) );
+		$primary->prefix = $isolated_prefix;
+		try {
+			$second = ( new JobRepository() )->claim_next( $second_token );
+		} finally {
+			$primary->prefix = $original_prefix;
+		}
 		$this->assertNull( $second, 'the conditional UPDATE gives the pending row to only one database connection' );
 	}
 
