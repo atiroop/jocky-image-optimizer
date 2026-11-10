@@ -150,7 +150,7 @@ try {
 		$before = hash_file( 'sha256', $source );
 		$request = new OptimizationRequest( $source, $output, $encoder, $mode, 78, 60, false, 52428800, 40000000, 180000, $format, true, 6 );
 		$result = $manager->optimize( $request );
-		$assert( 'optimized' === $result->status && null !== $result->output_bytes && is_file( $output ), sprintf( '%s to %s conversion produces a measured output', mime_content_type( $source ), $format ) );
+		$assert( 'optimized' === $result->status && null !== $result->output_bytes && is_file( $output ), sprintf( '%s to %s conversion produces a measured output (status: %s; error: %s)', mime_content_type( $source ), $format, $result->status, $result->error_category ?? 'none' ) );
 		$assert( $before === hash_file( 'sha256', $source ), 'source bytes remain unchanged after conversion' );
 		$info = $validator->inspect( $output, $request );
 		$assert( $format === $info->mime && $info->width === 256 && $info->height === 256, sprintf( '%s output structure and dimensions validate', $format ) );
