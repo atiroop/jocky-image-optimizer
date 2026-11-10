@@ -1,14 +1,14 @@
 # Changelog
 
-## Unreleased — Milestone 5 recovery implementation (CI verified 2026-11-10)
+## Unreleased — Milestone 5 recovery implementation and acceptance audit (CI verified 2026-11-10)
 
 - Added schema-v2 derivative ownership, persistent recovery audit, and resumable bounded cleanup-batch records while preserving the existing queue tables and atomic queue operations.
 - Added bounded streaming source/derivative SHA-256 verification, safe registry-only cleanup with path/symlink/inode checks, operation locks, explicit confirmation, cleanup preview, and legacy JIO metadata discovery.
 - Added paginated Recovery and Optimization History admin pages, Media Library recovery links, and `wp jio recovery` status, verify, preview, cleanup, scan, and bulk controls.
-- Added integration coverage for derivative registry creation, corruption detection, queue/lock conflict handling, cleanup audit, and preservation of originals, thumbnails, and attachment metadata. All five jobs passed in [GitHub Actions run 42775341373](https://github.com/atiroop/jocky-image-optimizer/actions/runs/42775341373) on commit `5e7497af9f7be78c2f693cbb9f4cfe5a0e90e871`.
+- Added integration coverage for derivative registry creation, corruption detection, queue/lock conflict handling, cleanup audit, and preservation of originals, thumbnails, and attachment metadata. The initial implementation passed in [run 42775341373](https://github.com/atiroop/jocky-image-optimizer/actions/runs/42775341373); the final audit fixes and WP-CLI smoke passed all five jobs in [run 42780293142](https://github.com/atiroop/jocky-image-optimizer/actions/runs/42780293142) on commit `79a112b792f6cd2eb26cc1af70ca7aa9616a3676`.
 - Recovery preview rechecks conflicted and interrupted-removal records so detected corruption remains visible and repaired files become eligible only after fresh validation. Queue savings aggregation now uses signed arithmetic when an output is larger than its input.
 - Known limits: 50 MiB per-file and 100 MiB per-operation hash bounds; trust in non-hostile local uploads-directory writers due to portable PHP unlink TOCTOU limits; MySQL advisory locks are connection scoped; original restoration requires an external backup.
-- Acceptance audit fixes pending CI: recovery preflight now recognizes the queue's actual `running` state, scanner progress normalizes legacy partial state to the complete admin.js response shape, and regression tests cover these cases plus source loss/corruption, authorization, and migration preservation. The disposable WordPress matrix now also invokes recovery status, preview, and scan through checksum-verified WP-CLI 2.12.0 against the packaged plugin. Runs 42778390911 and 42779476694 exposed source status and mixed-variant test expectation issues; the source checks are now isolated to a single-variant fixture, with another CI run pending.
+- Acceptance audit fixes: recovery preflight recognizes actual `pending`/`running` queue states, scanner progress normalizes legacy partial state to the admin.js response shape, and tests cover source loss/corruption, authorization, and migration preservation. The disposable WordPress matrix invokes recovery status, preview, and scan through checksum-verified WP-CLI 2.12.0 against the packaged plugin. Outstanding test gaps and the unconfirmed duplicate WP_DEBUG source are recorded in `VALIDATION.md`; merge remains blocked pending owner review of those gaps and the truncated section 13 requirements.
 
 ## 0.4.0-beta — First installable beta
 
