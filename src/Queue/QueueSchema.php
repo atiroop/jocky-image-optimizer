@@ -23,11 +23,13 @@ final class QueueSchema {
 		if ( ! isset( $GLOBALS['wpdb'] ) ) {
 			return;
 		}
-		if ( (int) get_option( self::OPTION, 0 ) < self::VERSION || ! self::tables_exist() ) {
+		if ( (int) get_option( self::OPTION, 0 ) < self::VERSION || ! self::schema_ready() ) {
 			self::install();
 			return;
 		}
-		self::seed_slots();
+		if ( ! self::seed_slots() ) {
+			self::install();
+		}
 	}
 
 	/** Creates or upgrades queue tables and records the schema version. */
@@ -136,32 +138,62 @@ final class QueueSchema {
 		dbDelta( $derivatives_sql );
 		dbDelta( $events_sql );
 		dbDelta( $cleanup_sql );
-		if ( ! self::tables_exist() ) {
+		if ( ! self::schema_ready() || ! self::seed_slots() ) {
 			return;
 		}
-		self::seed_slots();
 		update_option( self::OPTION, self::VERSION, false );
 	}
 
-	/** Checks the required queue tables using the active WordPress prefix. */
-	private static function tables_exist(): bool {
+	/** Checks required tables and indexes before marking the migration complete. */
+	private static function schema_ready(): bool {
 		global $wpdb;
-		$jobs   = self::jobs_table();
-		$slots  = self::slots_table();
-		$tables = array( $jobs, $slots, self::derivatives_table(), self::events_table(), self::cleanup_table() );
-		foreach ( $tables as $table ) {
+		$required = array(
+			self::jobs_table()        => array(
+				'columns' => array( 'id', 'attachment_id', 'variant_key', 'output_format', 'source_fingerprint', 'job_key', 'status', 'attempts', 'available_at', 'lock_token', 'locked_at', 'started_at', 'finished_at', 'input_bytes', 'output_bytes', 'bytes_saved', 'error_code', 'created_at', 'updated_at' ),
+				'indexes' => array( 'PRIMARY', 'job_key', 'status_available', 'attachment_status' ),
+			),
+			self::slots_table()       => array(
+				'columns' => array( 'slot_id', 'lock_token', 'locked_at' ),
+				'indexes' => array( 'PRIMARY' ),
+			),
+			self::derivatives_table() => array(
+				'columns' => array( 'id', 'record_key', 'attachment_id', 'variant_key', 'source_relative_path', 'source_mime', 'source_bytes', 'source_sha256', 'source_fingerprint', 'metadata_hash', 'derivative_relative_path', 'output_format', 'derivative_sha256', 'input_bytes', 'output_bytes', 'encoder_id', 'encoder_parameters', 'validation_status', 'lifecycle_status', 'created_at', 'updated_at' ),
+				'indexes' => array( 'PRIMARY', 'record_key', 'attachment_status', 'status_id' ),
+			),
+			self::events_table()      => array(
+				'columns' => array( 'id', 'attachment_id', 'derivative_id', 'action', 'status', 'details', 'created_at' ),
+				'indexes' => array( 'PRIMARY', 'attachment_id', 'action_status' ),
+			),
+			self::cleanup_table()     => array(
+				'columns' => array( 'id', 'status', 'last_derivative_id', 'eligible_count', 'processed_count', 'cleaned_count', 'conflict_count', 'requested_by', 'lock_token', 'created_at', 'updated_at' ),
+				'indexes' => array( 'PRIMARY', 'status_updated' ),
+			),
+		);
+		foreach ( $required as $table => $requirements ) {
 			if ( $table !== $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) ) {
+				return false;
+			}
+			$columns = (array) $wpdb->get_col( "SHOW COLUMNS FROM {$table}", 0 );
+			if ( array_diff( $requirements['columns'], $columns ) ) {
+				return false;
+			}
+			$found = (array) $wpdb->get_col( "SHOW INDEX FROM {$table}", 2 );
+			if ( array_diff( $requirements['indexes'], $found ) ) {
 				return false;
 			}
 		}
 		return true;
 	}
 
-	/** Restores any missing bounded worker and scanner slot rows idempotently. */
-	private static function seed_slots(): void {
+	/** Restores and verifies all bounded worker and scanner slot rows idempotently. */
+	private static function seed_slots(): bool {
 		global $wpdb;
 		$table = self::slots_table();
-		$wpdb->query( "INSERT IGNORE INTO {$table} (slot_id) VALUES (0),(1),(2),(3),(4)" );
+		if ( false === $wpdb->query( "INSERT IGNORE INTO {$table} (slot_id) VALUES (0),(1),(2),(3),(4)" ) ) {
+			return false;
+		}
+		$slots = array_map( 'intval', (array) $wpdb->get_col( "SELECT slot_id FROM {$table} WHERE slot_id IN (0,1,2,3,4) ORDER BY slot_id ASC" ) );
+		return array( 0, 1, 2, 3, 4 ) === $slots;
 	}
 
 	/** Returns the safely prefixed queue table name.

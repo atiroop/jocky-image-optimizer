@@ -211,6 +211,9 @@ final class AdminPages {
 				$result = 'scan_' . ( $scan['complete'] ? 'complete' : 'continued' );
 				break;
 			case 'start_bulk':
+				if ( ! $this->recovery->destructive_cleanup_enabled() ) {
+					wp_die( esc_html__( 'Destructive recovery is disabled by the fail-closed safety gate.', 'jocky-image-optimizer' ), '', array( 'response' => 403 ) );
+				}
 				if ( empty( $_POST['confirm_bulk'] ) ) {
 					wp_die( esc_html__( 'Explicit bulk cleanup confirmation is required.', 'jocky-image-optimizer' ), '', array( 'response' => 400 ) );
 				}
@@ -229,6 +232,10 @@ final class AdminPages {
 				$result = null !== $batch && $repo->set_batch_status( (int) $batch['id'], array( 'pending', 'running' ), 'paused' ) ? 'paused' : 'state_error';
 				break;
 			case 'resume':
+				if ( ! $this->recovery->destructive_cleanup_enabled() ) {
+					$result = 'cleanup_disabled';
+					break;
+				}
 				$result = null !== $batch && $repo->set_batch_status( (int) $batch['id'], array( 'paused' ), 'pending' ) ? 'resumed' : 'state_error';
 				if ( 'resumed' === $result ) {
 					$this->recovery_worker->schedule( (int) $batch['id'] );
@@ -277,7 +284,9 @@ final class AdminPages {
 			echo '<tr><td colspan="6">' . esc_html__( 'No verifiable plugin-owned derivatives were found.', 'jocky-image-optimizer' ) . '</td></tr>';
 		}
 		echo '</tbody></table>';
-		if ( 'ready' === $plan['status'] && array() !== $plan['eligible'] ) {
+		if ( ! $this->recovery->destructive_cleanup_enabled() && array() !== $plan['eligible'] ) {
+			echo '<div class="notice notice-warning"><p>' . esc_html__( 'Derivative cleanup is disabled by default because WordPress core metadata updates and attachment deletion do not share the plugin operation lock. Verification and preview remain available.', 'jocky-image-optimizer' ) . '</p></div>';
+		} elseif ( 'ready' === $plan['status'] && array() !== $plan['eligible'] ) {
 			// translators: 1: derivative file count, 2: total bytes.
 			echo '<p>' . esc_html( sprintf( __( 'Preview: %1$d validated derivative files (%2$s bytes) can be removed. Original files and WordPress-generated thumbnails will be retained.', 'jocky-image-optimizer' ), count( $plan['eligible'] ), number_format_i18n( (int) $plan['bytes'] ) ) ) . '</p>';
 			echo '<form method="post" action="' . esc_url( admin_url( 'admin-post.php' ) ) . '"><input type="hidden" name="action" value="jio_recovery_attachment"><input type="hidden" name="attachment_id" value="' . esc_attr( (string) $id ) . '"><input type="hidden" name="after_id" value="' . esc_attr( (string) $after_id ) . '">';
@@ -353,7 +362,7 @@ final class AdminPages {
 			if ( in_array( $batch['status'], array( 'pending', 'running' ), true ) ) {
 				$this->recovery_button( 'pause', __( 'Pause cleanup', 'jocky-image-optimizer' ), 'secondary' );
 			}
-			if ( 'paused' === $batch['status'] ) {
+			if ( 'paused' === $batch['status'] && $this->recovery->destructive_cleanup_enabled() ) {
 				$this->recovery_button( 'resume', __( 'Resume cleanup', 'jocky-image-optimizer' ), 'primary' );
 			}
 			if ( in_array( $batch['status'], array( 'pending', 'paused' ), true ) ) {
@@ -361,7 +370,9 @@ final class AdminPages {
 			}
 		}
 		echo '</form>';
-		if ( null === $batch || ! in_array( $batch['status'], array( 'pending', 'running', 'paused' ), true ) ) {
+		if ( ! $this->recovery->destructive_cleanup_enabled() ) {
+			echo '<p>' . esc_html__( 'Destructive bulk cleanup is disabled by default. Dry-run inventory and integrity verification are available.', 'jocky-image-optimizer' ) . '</p>';
+		} elseif ( null === $batch || ! in_array( $batch['status'], array( 'pending', 'running', 'paused' ), true ) ) {
 			echo '<form method="post" action="' . esc_url( admin_url( 'admin-post.php' ) ) . '"><input type="hidden" name="action" value="jio_recovery_action"><input type="hidden" name="recovery_action" value="start_bulk">';
 			wp_nonce_field( 'jio_recovery_action' );
 			echo '<p><label><input type="checkbox" name="confirm_bulk" value="1" required> ' . esc_html__( 'I explicitly authorize a background batch to remove integrity-verified JIO derivatives; originals and WordPress thumbnails are retained.', 'jocky-image-optimizer' ) . '</label></p>';

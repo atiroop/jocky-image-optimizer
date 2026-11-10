@@ -595,6 +595,48 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 		$this->assertNotFalse( $source_bytes );
 	}
 
+	public function test_cleanup_rechecks_current_wordpress_metadata_before_unlink(): void {
+		$this->set_output_format( 'webp' );
+		[ $attachment_id, $source ] = $this->create_png_attachment( 'recovery-metadata-race', false );
+		$this->assertSame( 1, $this->jobs->enqueue_many( ( new AttachmentJobFactory() )->jobs_for_attachment( $attachment_id ) ) );
+		$this->assertSame( 1, ( new QueueWorker( $this->jobs ) )->run_batch( 1 )['completed'] );
+		$derivative     = preg_replace( '/\\.png$/', '.jio.webp', $source );
+		$source_hash    = hash_file( 'sha256', $source );
+		$original_meta  = get_post_meta( $attachment_id, '_wp_attached_file', true );
+		$registry       = QueueSchema::derivatives_table();
+		$changed_at_edge = false;
+		$mutate_metadata = static function ( string $query ) use ( $registry, $attachment_id, &$changed_at_edge ): string {
+			if ( ! $changed_at_edge && str_contains( $query, "UPDATE {$registry} SET lifecycle_status = 'removing'" ) ) {
+				$changed_at_edge = true;
+				update_post_meta( $attachment_id, '_wp_attached_file', 'changed-by-concurrent-wordpress-operation.png' );
+			}
+			return $query;
+		};
+		add_filter( 'query', $mutate_metadata, 999 );
+		$result = ( new RecoveryService() )->cleanup_attachment( $attachment_id, true );
+		remove_filter( 'query', $mutate_metadata, 999 );
+		update_post_meta( $attachment_id, '_wp_attached_file', $original_meta );
+		$this->assertTrue( $changed_at_edge, 'the test changed core metadata between preview and the deletion boundary' );
+		$this->assertSame( 'conflict', $result['status'] );
+		$this->assertSame( $source_hash, hash_file( 'sha256', $source ) );
+		$this->assertFileExists( $derivative, 'a metadata change at the destructive boundary prevents unlink' );
+		$changed_file_at_edge = false;
+		$mutate_derivative    = static function ( string $query ) use ( $registry, $derivative, &$changed_file_at_edge ): string {
+			if ( ! $changed_file_at_edge && str_contains( $query, "UPDATE {$registry} SET lifecycle_status = 'removing'" ) ) {
+				$changed_file_at_edge = true;
+				file_put_contents( $derivative, 'replaced after integrity preview' );
+			}
+			return $query;
+		};
+		add_filter( 'query', $mutate_derivative, 999 );
+		$changed_file_result = ( new RecoveryService() )->cleanup_attachment( $attachment_id, true );
+		remove_filter( 'query', $mutate_derivative, 999 );
+		$this->assertTrue( $changed_file_at_edge, 'the test replaced the derivative between preview and unlink' );
+		$this->assertSame( 'conflict', $changed_file_result['status'] );
+		$this->assertFileExists( $derivative, 'a changed derivative is retained for operator review' );
+		$this->assertSame( $source_hash, hash_file( 'sha256', $source ) );
+	}
+
 	public function test_cleanup_database_failures_keep_the_operation_tracked_and_never_report_false_success(): void {
 		global $wpdb;
 		$this->set_output_format( 'webp' );
@@ -752,6 +794,14 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 		$stale       = $this->jobs->claim_next( $stale_token );
 		$this->assertIsArray( $stale );
 		$wpdb->query( $wpdb->prepare( "UPDATE {$table} SET locked_at = DATE_SUB(UTC_TIMESTAMP(), INTERVAL 601 SECOND) WHERE id = %d", (int) $job['id'] ) );
+		$secondary = new wpdb( DB_USER, DB_PASSWORD, DB_NAME, DB_HOST );
+		$secondary->prefix = $wpdb->prefix;
+		$lock_name = 'jio_' . substr( hash( 'sha256', $wpdb->prefix . ':' . $attachment_id ), 0, 48 );
+		$this->assertSame( '1', (string) $secondary->get_var( $secondary->prepare( 'SELECT GET_LOCK(%s, 0)', $lock_name ) ) );
+		$this->jobs->recover_stale();
+		$this->assertSame( 'running', $wpdb->get_var( $wpdb->prepare( "SELECT status FROM {$table} WHERE id = %d", (int) $job['id'] ) ), 'an active attachment operation prevents stale ownership transfer' );
+		$secondary->get_var( $secondary->prepare( 'SELECT RELEASE_LOCK(%s)', $lock_name ) );
+		$secondary->close();
 		$this->jobs->recover_stale();
 		$this->assertSame( 'pending', $wpdb->get_var( $wpdb->prepare( "SELECT status FROM {$table} WHERE id = %d", (int) $job['id'] ) ) );
 		QueueState::pause();

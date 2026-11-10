@@ -41,6 +41,9 @@ final class RecoveryWorker {
 	 * @param int $batch_id Persistent cleanup batch ID.
 	 */
 	public function schedule( int $batch_id ): void {
+		if ( ! $this->service->destructive_cleanup_enabled() ) {
+			return;
+		}
 		$args = array( $batch_id );
 		if ( ! wp_next_scheduled( self::CRON_HOOK, $args ) ) {
 			wp_schedule_single_event( time() + 5, self::CRON_HOOK, $args );

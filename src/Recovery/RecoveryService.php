@@ -160,6 +160,13 @@ final class RecoveryService {
 	 * @param int  $after_id Keyset cursor for repeated bounded cleanup.
 	 */
 	public function cleanup_attachment( int $attachment_id, bool $confirm, int $after_id = 0 ): array {
+		if ( ! $this->destructive_cleanup_enabled() ) {
+			return array(
+				'status'    => 'cleanup_disabled',
+				'cleaned'   => 0,
+				'conflicts' => 0,
+			);
+		}
 		if ( ! $confirm ) {
 			return array(
 				'status'    => 'confirmation_required',
@@ -196,7 +203,7 @@ final class RecoveryService {
 				$source_path = $this->resolve_owned_path( (string) $entry['source_relative_path'] );
 				$path        = $this->resolve_owned_path( (string) $entry['derivative_relative_path'] );
 				// phpcs:ignore WordPress.WP.AlternativeFunctions.unlink_unlink -- Path confinement and SHA-256/inode identity were rechecked in inspect_record immediately before lifecycle transition.
-				if ( null === $source_path || null === $path || ! $this->same_identity( $source_path, $entry['source_identity'] ?? array() ) || ! $this->same_identity( $path, $entry['derivative_identity'] ?? array() ) || ! unlink( $path ) ) {
+				if ( null === $source_path || null === $path || ! $this->deletion_boundary_is_safe( $entry, $entry ) || ! unlink( $path ) ) {
 					$this->records->set_status( $id, 'conflict', 'conflict' );
 					$this->records->audit( $attachment_id, $id, 'cleanup', 'conflict', array( 'reason' => 'file_changed_or_unlink_failed' ) );
 					++$conflicts;
@@ -237,6 +244,12 @@ final class RecoveryService {
 	 * @param int $limit Maximum records to inspect in this call.
 	 */
 	public function cleanup_batch( int $batch_id, int $limit = 10 ): array {
+		if ( ! $this->destructive_cleanup_enabled() ) {
+			return array(
+				'status'    => 'cleanup_disabled',
+				'processed' => 0,
+			);
+		}
 		$this->hashed_bytes     = 0;
 		$this->budget_exhausted = false;
 		$repository             = $this->records;
@@ -445,6 +458,45 @@ final class RecoveryService {
 		return false !== $stat && (int) $stat['dev'] === (int) $identity['dev'] && (int) $stat['ino'] === (int) $identity['ino'] && (int) $stat['size'] === (int) $identity['size'] && (int) $stat['mtime'] === (int) $identity['mtime'];
 	}
 
+	/** Destructive recovery is opt-in because WordPress core mutation paths do not use the plugin lock. */
+	public function destructive_cleanup_enabled(): bool {
+		return defined( 'JIO_ENABLE_DESTRUCTIVE_RECOVERY' )
+			&& true === JIO_ENABLE_DESTRUCTIVE_RECOVERY
+			&& function_exists( 'wp_get_environment_type' )
+			&& in_array( wp_get_environment_type(), array( 'local', 'development' ), true );
+	}
+
+	/** Rechecks current attachment, registry, metadata, queue and file identity immediately before unlink.
+	 *
+	 * @param array<string, mixed> $record Registry row selected for deletion.
+	 * @param array<string, mixed> $checked Previously hashed record and filesystem identities.
+	 */
+	private function deletion_boundary_is_safe( array $record, array $checked ): bool {
+		$attachment_id = (int) $record['attachment_id'];
+		$id            = (int) $record['id'];
+		$current       = $this->records->get( $id );
+		$target        = $this->targets->target( $attachment_id, (string) $record['variant_key'] );
+		$source_path   = $this->resolve_owned_path( (string) $record['source_relative_path'] );
+		$path          = $this->resolve_owned_path( (string) $record['derivative_relative_path'] );
+		if ( 'attachment' !== get_post_type( $attachment_id ) || null === $current || 'removing' !== $current['lifecycle_status'] || (int) $current['attachment_id'] !== $attachment_id || null === $target || null === $source_path || null === $path || $this->records->has_active_optimization( $attachment_id ) ) {
+			return false;
+		}
+		foreach ( array( 'variant_key', 'source_relative_path', 'source_sha256', 'source_fingerprint', 'source_mime', 'metadata_hash', 'derivative_relative_path', 'derivative_sha256', 'output_format' ) as $field ) {
+			if ( ! isset( $current[ $field ], $record[ $field ] ) || ! hash_equals( (string) $current[ $field ], (string) $record[ $field ] ) ) {
+				return false;
+			}
+		}
+		if ( ! hash_equals( (string) $record['source_relative_path'], $target['relative_path'] ) || ! hash_equals( (string) $record['source_fingerprint'], $target['fingerprint'] ) || ! hash_equals( (string) $record['metadata_hash'], $this->metadata_hash( $attachment_id ) ) || ! hash_equals( $this->expected_derivative_path( (string) $record['source_relative_path'], (string) $record['output_format'], (string) $record['source_mime'] ), (string) $record['derivative_relative_path'] ) ) {
+			return false;
+		}
+		foreach ( $this->targets->targets( $attachment_id ) as $managed_target ) {
+			if ( hash_equals( $managed_target['relative_path'], (string) $record['derivative_relative_path'] ) ) {
+				return false;
+			}
+		}
+		return $this->same_identity( $source_path, $checked['source_identity'] ?? array() ) && $this->same_identity( $path, $checked['derivative_identity'] ?? array() );
+	}
+
 	/** Removes one bulk-selected derivative only after acquiring its attachment lock and rechecking it.
 	 *
 	 * @param array<string, mixed> $record Trusted registry record.
@@ -468,7 +520,7 @@ final class RecoveryService {
 			$source_path = $this->resolve_owned_path( (string) $record['source_relative_path'] );
 			$path        = $this->resolve_owned_path( (string) $record['derivative_relative_path'] );
 			// phpcs:ignore WordPress.WP.AlternativeFunctions.unlink_unlink -- The path is registry-owned and rechecked against canonical uploads confinement and SHA-256 immediately before deletion.
-			if ( null === $source_path || null === $path || ! $this->same_identity( $source_path, $checked['source_identity'] ?? array() ) || ! $this->same_identity( $path, $checked['derivative_identity'] ?? array() ) || ! unlink( $path ) ) {
+			if ( null === $source_path || null === $path || ! $this->deletion_boundary_is_safe( $record, $checked ) || ! unlink( $path ) ) {
 				$this->records->set_status( (int) $record['id'], 'conflict', 'conflict' );
 				$this->records->audit( $attachment_id, (int) $record['id'], 'bulk_cleanup', 'conflict', array( 'reason' => 'file_changed_or_unlink_failed' ) );
 				return 'conflict';

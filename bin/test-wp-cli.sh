@@ -19,6 +19,10 @@ define( 'DB_HOST', getenv( 'JIO_WPCLI_DB_HOST' ) );
 define( 'DB_CHARSET', 'utf8mb4' );
 define( 'DB_COLLATE', '' );
 define( 'WP_DEBUG', false );
+define( 'WP_ENVIRONMENT_TYPE', 'local' );
+if ( '1' === getenv( 'JIO_ENABLE_DESTRUCTIVE_RECOVERY' ) ) {
+	define( 'JIO_ENABLE_DESTRUCTIVE_RECOVERY', true );
+}
 $table_prefix = 'jio_cli_';
 if ( ! defined( 'ABSPATH' ) ) {
 	define( 'ABSPATH', __DIR__ . '/' );
@@ -122,6 +126,37 @@ if wp_cli jio recovery cleanup --attachment-id=999999999 --confirm; then
 	echo 'Cleanup accepted an invalid attachment ID.' >&2
 	exit 1
 fi
+if wp_cli jio recovery cleanup --attachment-id="$attachment_id" --confirm; then
+	echo 'Cleanup succeeded while the fail-closed default was active.' >&2
+	exit 1
+fi
+if wp_cli jio recovery bulk --action=start --confirm; then
+	echo 'Bulk cleanup started while the fail-closed default was active.' >&2
+	exit 1
+fi
+status="$(wp_cli jio recovery status)"
+grep -q 'Cleanup batch: none' <<< "$status"
+test -f "$source_path"
+test -f "$derivative_path"
+export JIO_ENABLE_DESTRUCTIVE_RECOVERY=1
+wp_cli eval-file "$PWD/bin/test-recovery-concurrency.php"
+wp_cli eval-file "$PWD/bin/prepare-claim-race.php"
+claim_output_one="$RUNNER_TEMP/jio-claim-worker-one.txt"
+claim_output_two="$RUNNER_TEMP/jio-claim-worker-two.txt"
+JIO_CLAIM_TOKEN="$(php -r 'echo bin2hex(random_bytes(16));')" wp_cli eval-file "$PWD/bin/test-claim-race-worker.php" > "$claim_output_one" &
+claim_pid_one=$!
+JIO_CLAIM_TOKEN="$(php -r 'echo bin2hex(random_bytes(16));')" wp_cli eval-file "$PWD/bin/test-claim-race-worker.php" > "$claim_output_two" &
+claim_pid_two=$!
+wp_cli eval-file "$PWD/bin/release-claim-race.php" > "$RUNNER_TEMP/jio-claim-barrier.txt" &
+claim_barrier_pid=$!
+wait "$claim_pid_one"
+wait "$claim_pid_two"
+wait "$claim_barrier_pid"
+cat "$claim_output_one" "$claim_output_two"
+claimed_count="$(awk '/^CLAIMED:/ { count++ } END { print count + 0 }' "$claim_output_one" "$claim_output_two")"
+empty_count="$(awk '$0 == "EMPTY" { count++ } END { print count + 0 }' "$claim_output_one" "$claim_output_two")"
+[[ "$claimed_count" == '1' && "$empty_count" == '1' ]]
+echo 'Concurrent independent WP-CLI queue claim barrier passed.'
 cleanup="$(wp_cli jio recovery cleanup --attachment-id="$attachment_id" --confirm)"
 printf '%s\n' "$cleanup"
 grep -q 'removed 1 derivatives' <<< "$cleanup"

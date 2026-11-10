@@ -112,6 +112,9 @@ final class RecoveryCommand extends \WP_CLI_Command {
 		if ( ! isset( $assoc_args['confirm'] ) ) {
 			\WP_CLI::error( 'Destructive cleanup requires --confirm.' );
 		}
+		if ( ! $this->service->destructive_cleanup_enabled() ) {
+			\WP_CLI::error( 'Destructive recovery is disabled by the fail-closed safety gate.' );
+		}
 		$result = $this->service->cleanup_attachment( $id, true, $after );
 		\WP_CLI::line( sprintf( 'Cleanup status: %s; removed %d derivatives; conflicts %d.', $result['status'], $result['cleaned'], $result['conflicts'] ) );
 		if ( ! empty( $result['has_more'] ) ) {
@@ -160,6 +163,9 @@ final class RecoveryCommand extends \WP_CLI_Command {
 				\WP_CLI::line( sprintf( 'Registered active candidates: %d files across %d attachments; %s bytes. Each source and derivative is reverified before removal.', $summary['records'], $summary['attachments'], number_format_i18n( $summary['bytes'] ) ) );
 				return;
 			case 'start':
+				if ( ! $this->service->destructive_cleanup_enabled() ) {
+					\WP_CLI::error( 'Destructive recovery is disabled by the fail-closed safety gate.' );
+				}
 				if ( ! isset( $assoc_args['confirm'] ) ) {
 					\WP_CLI::error( 'Starting destructive bulk cleanup requires --confirm.' );
 				}
@@ -175,6 +181,9 @@ final class RecoveryCommand extends \WP_CLI_Command {
 				\WP_CLI::success( sprintf( 'Started cleanup batch #%d; it will process at most 10 records per worker tick.', $id ) );
 				return;
 			case 'run':
+				if ( ! $this->service->destructive_cleanup_enabled() ) {
+					\WP_CLI::error( 'Destructive recovery is disabled by the fail-closed safety gate.' );
+				}
 				if ( null === $batch ) {
 					\WP_CLI::error( 'No cleanup batch exists.' );
 				}
@@ -189,6 +198,9 @@ final class RecoveryCommand extends \WP_CLI_Command {
 				$this->transition_batch( $repo, $batch, array( 'pending', 'running' ), 'paused' );
 				return;
 			case 'resume':
+				if ( ! $this->service->destructive_cleanup_enabled() ) {
+					\WP_CLI::error( 'Destructive recovery is disabled by the fail-closed safety gate.' );
+				}
 				$this->transition_batch( $repo, $batch, array( 'paused' ), 'pending' );
 				$this->worker->schedule( (int) $batch['id'] );
 				return;
