@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.0-beta — Milestone 5 beta
+
+- Establish root `VERSION` as the authoritative semantic version and align the WordPress header, runtime constant, README, package metadata, generated ZIP filename, and GitHub Actions artifact name.
+- Validate semantic-version syntax and reject inconsistent release metadata or incorrectly named ZIP packages. Add WordPress-native prerelease comparison coverage and document the release procedure.
+- No automatic updates, remote update APIs, plugin slug changes, or directory changes.
+
 ## Unreleased — Milestone 5 recovery and safety closure (CI verified 2026-11-10)
 
 - Safety closure: destructive per-attachment and bulk cleanup now fail closed unless an explicit constant is enabled in a `local` or `development` WordPress environment. Admin, CLI, worker, and service paths all enforce the gate; read-only preview and verification remain available. Deletion repeats attachment/metadata/registry/queue/path/file identity checks at the unlink boundary and refuses paths WordPress currently manages as originals or thumbnails.

@@ -50,7 +50,7 @@ foreach ( $iterator as $item ) {
 	$absolute = $item->getPathname();
 	$relative = substr( $absolute, strlen( $root ) + 1 );
 	$relative = str_replace( DIRECTORY_SEPARATOR, '/', $relative );
-	if ( preg_match( '~^(?:\.git|build|tests|\.github|bin|scripts|AGENTS\.md|SPEC\.md|ROADMAP\.md|ARCHITECTURE\.md|VALIDATION\.md)(?:/|$)|(?:^|/)(?:\.gitignore|\.gitattributes|composer\.(?:json|lock)|phpcs\.xml\.dist|phpunit\.xml\.dist)$~', $relative ) ) {
+	if ( preg_match( '~^(?:\.git|build|tests|\.github|bin|scripts|AGENTS\.md|SPEC\.md|ROADMAP\.md|ARCHITECTURE\.md|VALIDATION\.md|CHANGELOG\.md)(?:/|$)|(?:^|/)(?:\.gitignore|\.gitattributes|composer\.(?:json|lock)|phpcs\.xml\.dist|phpunit\.xml\.dist)$~', $relative ) ) {
 		continue;
 	}
 	if ( $item->isDir() ) {

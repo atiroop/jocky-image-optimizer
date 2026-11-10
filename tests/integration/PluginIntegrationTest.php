@@ -225,7 +225,12 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 
 	public function test_beta_zip_activation_initializes_queue_schema_and_safe_defaults(): void {
 		global $wpdb;
-		$this->assertSame( '0.4.0-beta', JIO_VERSION );
+		$plugin_data = get_plugin_data( JIO_FILE, false, false );
+		$this->assertSame( '0.5.0-beta', JIO_VERSION );
+		$this->assertSame( JIO_VERSION, $plugin_data['Version'], 'WordPress reads the uploaded plugin header version' );
+		$this->assertTrue( version_compare( $plugin_data['Version'], '0.4.0-beta', '>' ), 'WordPress native version comparison recognizes the uploaded release as newer' );
+		$this->assertTrue( version_compare( '0.6.0-beta.1', '0.6.0-beta.2', '<' ), 'WordPress native comparison orders prerelease identifiers' );
+		$this->assertTrue( version_compare( '0.6.0-beta.2', '0.6.0', '<' ), 'WordPress native comparison keeps prereleases below final releases' );
 		$this->assertTrue( is_plugin_active( self::PLUGIN ) );
 		$this->assertFalse( Settings::sanitize( get_option( Plugin::OPTION_NAME ) )['auto_optimize'] );
 		$this->assertSame( QueueSchema::VERSION, (int) get_option( QueueSchema::OPTION ) );
