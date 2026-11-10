@@ -1,8 +1,8 @@
-# Jocky Image Optimizer 0.4.0-beta
+# Jocky Image Optimizer 0.5.0-beta
 
 Jocky Image Optimizer is a self-hosted WordPress plugin for local image optimization. The first installable beta adds Media Library actions, a bounded background queue, and JPEG/PNG-to-WebP/AVIF derivatives. Original uploads and WordPress attachment metadata remain unchanged, and derivative files stay inactive for frontend delivery.
 
-The beta ZIP is built and tested by GitHub Actions on PHP 8.3 with WordPress 6.6.11 and 7.1.4. See [VALIDATION.md](VALIDATION.md) for the current workflow result, artifact download location, ZIP validation, and beta limitations.
+The `VERSION` file is the authoritative release version. Packaging and CI reject mismatches in the plugin header, runtime constant, this title, changelog release heading, ZIP metadata, filename, or artifact name. The beta ZIP is built and tested by GitHub Actions on PHP 8.3 with WordPress 6.6.11 and 7.1.4. See [VALIDATION.md](VALIDATION.md) for current validation evidence and limitations.
 
 ## Recovery and derivative lifecycle
 
@@ -24,8 +24,8 @@ Image processing requires locally installed `jpegtran`, `djpeg` plus MozJPEG-com
 
 ## Install the beta from the WordPress Dashboard
 
-1. Open the successful beta CI run linked in [VALIDATION.md](VALIDATION.md), then download the `jocky-image-optimizer-0.4.0-beta` artifact.
-2. Extract the downloaded Actions artifact archive. It contains the installable `jocky-image-optimizer-0.4.0-beta.zip`.
+1. Open the successful release CI run linked in [VALIDATION.md](VALIDATION.md), then download the `jocky-image-optimizer-0.5.0-beta` artifact.
+2. Extract the downloaded Actions artifact archive. It contains the installable `jocky-image-optimizer-0.5.0-beta.zip`.
 3. In WordPress, open **Plugins → Add New Plugin → Upload Plugin**, select that inner plugin ZIP, and click **Install Now**.
 4. Click **Activate Plugin** after installation completes.
 5. Open **Image Optimizer** to review encoder availability and queue progress. Open **Image Optimizer → Settings** to choose output formats and other settings.
@@ -34,7 +34,7 @@ Activation creates the versioned queue tables and initializes the scanner and wo
 
 ### Build the installable ZIP from source
 
-For development, run `composer install --no-interaction`. To produce the beta ZIP, run `composer install --no-dev --no-interaction --optimize-autoloader`, then `php scripts/package.php` and `php scripts/validate-package.php`. The output is `build/jocky-image-optimizer-0.4.0-beta.zip`; it has exactly one `jocky-image-optimizer/` top-level directory and includes the production Composer autoloader without development tools. Build artifacts are excluded from Git.
+For development, run `composer install --no-interaction`. To produce the release ZIP, run `composer install --no-dev --no-interaction --optimize-autoloader`, then `php scripts/package.php` and `php scripts/validate-package.php`. The output is `build/jocky-image-optimizer-$(cat VERSION).zip`; it has exactly one `jocky-image-optimizer/` top-level directory, includes the matching `VERSION` metadata and production Composer autoloader, and excludes development tools. Build artifacts are excluded from Git. See [RELEASING.md](RELEASING.md) for the version bump and release workflow.
 
 For staging, take a database and uploads backup first. The plugin writes separate derivatives and does not swap frontend URLs, replace media, or change Elementor markup. Review the prerequisites and known limitations below before queueing work.
 
@@ -101,8 +101,9 @@ bash bin/install-wp-tests.sh wordpress_test root 'test-only-password' 127.0.0.1 
 composer install --no-dev --no-interaction --optimize-autoloader
 php scripts/package.php
 composer install --no-interaction
-unzip -q build/jocky-image-optimizer-0.4.0-beta.zip -d "$WP_CORE_DIR/wp-content/plugins"
-export JIO_PACKAGE_PATH="$PWD/build/jocky-image-optimizer-0.4.0-beta.zip"
+PACKAGE_ZIP="build/jocky-image-optimizer-$(cat VERSION).zip"
+unzip -q "$PACKAGE_ZIP" -d "$WP_CORE_DIR/wp-content/plugins"
+export JIO_PACKAGE_PATH="$PWD/$PACKAGE_ZIP"
 composer test:integration
 ```
 
