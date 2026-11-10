@@ -7,24 +7,37 @@
 
 declare(strict_types=1);
 
-/** Reads and verifies the version used by the plugin header and runtime.
+/** Reads the authoritative version and rejects inconsistent release metadata.
  *
  * @param string $root Repository root path.
- * @return string Matching version from the plugin header and runtime constant.
- * @throws RuntimeException When the plugin entry point is missing or versions differ.
+ * @return string Valid SemVer version from VERSION.
+ * @throws RuntimeException When release metadata is missing, invalid, or inconsistent.
  */
 function jio_package_version( string $root ): string {
+	$version_path = $root . DIRECTORY_SEPARATOR . 'VERSION';
+	$version      = is_readable( $version_path ) ? trim( (string) file_get_contents( $version_path ) ) : '';
+	$semver       = '/^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-((?:0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/';
+	if ( 1 !== preg_match( $semver, $version ) ) {
+		throw new RuntimeException( 'VERSION must contain one valid semantic version.' );
+	}
+
 	$plugin_file = $root . DIRECTORY_SEPARATOR . 'jocky-image-optimizer.php';
-	// This is a local source file; network URLs are never passed to this helper.
-	// phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents -- Read the local plugin header when building the standalone release ZIP.
-	$contents    = is_readable( $plugin_file ) ? file_get_contents( $plugin_file ) : false;
-	if ( ! is_string( $contents ) ) {
-		throw new RuntimeException( 'Unable to read the plugin entry point.' );
+	$readme_file = $root . DIRECTORY_SEPARATOR . 'README.md';
+	$changelog   = $root . DIRECTORY_SEPARATOR . 'CHANGELOG.md';
+	$plugin      = is_readable( $plugin_file ) ? file_get_contents( $plugin_file ) : false;
+	$readme      = is_readable( $readme_file ) ? file_get_contents( $readme_file ) : false;
+	$changes     = is_readable( $changelog ) ? file_get_contents( $changelog ) : false;
+	if ( ! is_string( $plugin ) || ! is_string( $readme ) || ! is_string( $changes ) ) {
+		throw new RuntimeException( 'Plugin, README, and changelog version metadata must be readable.' );
 	}
-	$header_matches   = preg_match( '/^\s*\* Version:\s*([0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.]+)?)\s*$/m', $contents, $header );
-	$constant_matches = preg_match( "/define\(\s*'JIO_VERSION'\s*,\s*'([0-9]+\\.[0-9]+\\.[0-9]+(?:-[A-Za-z0-9.]+)?)'\s*\)/", $contents, $constant );
-	if ( 1 !== $header_matches || 1 !== $constant_matches || $header[1] !== $constant[1] ) {
-		throw new RuntimeException( 'Plugin header version and JIO_VERSION must be present and match.' );
+
+	$header_count = preg_match_all( '/^\s*\* Version:\s*([^\r\n]+)\s*$/m', $plugin, $headers );
+	$constant_count = preg_match_all( "/define\(\s*'JIO_VERSION'\s*,\s*'([^']+)'\s*\)/", $plugin, $constants );
+	$title_matches = preg_match( '/^# Jocky Image Optimizer (\S+)\s*$/m', $readme, $title );
+	$changelog_matches = preg_match( '/^##\s+' . preg_quote( $version, '/' ) . '\s+—/m', $changes );
+	if ( 1 !== $header_count || 1 !== $constant_count || 1 !== $title_matches || 1 !== $changelog_matches || $version !== trim( $headers[1][0] ) || $version !== trim( $constants[1][0] ) || $version !== $title[1] ) {
+		throw new RuntimeException( 'VERSION, plugin header, JIO_VERSION, README title, and current changelog release must match.' );
 	}
-	return $header[1];
+
+	return $version;
 }

@@ -57,33 +57,39 @@ jobs:
           php-version: '8.3'
           extensions: gd, mbstring, mysqli, xml, zip
           tools: composer:v2
+      - name: Resolve and validate release version
+        id: release-version
+        run: echo "version=$(php scripts/get-version.php)" >> "$GITHUB_OUTPUT"
       - name: Install WebP encoder for packaged media integration tests
         run: |
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y webp
       - run: composer install --no-interaction --prefer-dist
       - name: Build and verify production ZIP
+        env:
+          JIO_VERSION: ${{ steps.release-version.outputs.version }}
         run: |
           composer install --no-dev --no-interaction --prefer-dist --optimize-autoloader
           php scripts/package.php
           composer test:package
-          unzip -t build/jocky-image-optimizer-0.4.0-beta.zip
+          unzip -t "build/jocky-image-optimizer-${JIO_VERSION}.zip"
           composer install --no-interaction --prefer-dist
       - name: Install isolated WordPress test runtime
         env:
           TMPDIR: ${{ runner.temp }}/jio-wp-tests
           WP_CORE_DIR: ${{ runner.temp }}/jio-wp-tests/wordpress
+          JIO_VERSION: ${{ steps.release-version.outputs.version }}
           WP_TESTS_DIR: ${{ runner.temp }}/jio-wp-tests/wordpress-tests-lib
         run: |
           bash bin/install-wp-tests.sh wordpress_test root root 127.0.0.1 "$WP_VERSION" true
           mkdir -p "$WP_CORE_DIR/wp-content/plugins"
-          unzip -q build/jocky-image-optimizer-0.4.0-beta.zip -d "$WP_CORE_DIR/wp-content/plugins"
+          unzip -q "build/jocky-image-optimizer-${JIO_VERSION}.zip" -d "$WP_CORE_DIR/wp-content/plugins"
       - name: Run WordPress integration tests against packaged plugin
         env:
           TMPDIR: ${{ runner.temp }}/jio-wp-tests
           WP_CORE_DIR: ${{ runner.temp }}/jio-wp-tests/wordpress
           WP_TESTS_DIR: ${{ runner.temp }}/jio-wp-tests/wordpress-tests-lib
-          JIO_PACKAGE_PATH: ${{ github.workspace }}/build/jocky-image-optimizer-0.4.0-beta.zip
+          JIO_PACKAGE_PATH: ${{ github.workspace }}/build/jocky-image-optimizer-${{ steps.release-version.outputs.version }}.zip
         run: |
           vendor/bin/phpunit --configuration phpunit.xml.dist --filter '/test_schema_seed_recovery|test_schema_version_mismatch|test_individual_attachment|test_automatic_queueing|test_bulk_scan|test_unsupported_and_missing/'
           composer test:integration
@@ -157,18 +163,23 @@ jobs:
           php-version: '8.3'
           extensions: zip
           tools: composer:v2
+      - name: Resolve and validate release version
+        id: release-version
+        run: echo "version=$(php scripts/get-version.php)" >> "$GITHUB_OUTPUT"
       - name: Build and validate beta plugin ZIP
+        env:
+          JIO_VERSION: ${{ steps.release-version.outputs.version }}
         run: |
           composer install --no-dev --no-interaction --prefer-dist --optimize-autoloader
           php scripts/package.php
           composer test:package
-          unzip -t build/jocky-image-optimizer-0.4.0-beta.zip
-          test -s build/jocky-image-optimizer-0.4.0-beta.zip
-          sha256sum build/jocky-image-optimizer-0.4.0-beta.zip
+          unzip -t "build/jocky-image-optimizer-${JIO_VERSION}.zip"
+          test -s "build/jocky-image-optimizer-${JIO_VERSION}.zip"
+          sha256sum "build/jocky-image-optimizer-${JIO_VERSION}.zip"
       - name: Publish installable plugin ZIP as workflow artifact
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: jocky-image-optimizer-0.4.0-beta
-          path: build/jocky-image-optimizer-0.4.0-beta.zip
+          name: jocky-image-optimizer-${{ steps.release-version.outputs.version }}
+          path: build/jocky-image-optimizer-${{ steps.release-version.outputs.version }}.zip
           if-no-files-found: error
           retention-days: 30
