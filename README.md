@@ -2,6 +2,8 @@
 
 Jocky Image Optimizer is a self-hosted WordPress plugin for local image optimization. The development release includes explicit JPEG/PNG optimization and JPEG/PNG-to-WebP/AVIF conversion APIs. Every operation writes a separate output file; uploads, attachments, thumbnails, and metadata are not hooked or modified.
 
+Milestone 3’s WebP/AVIF implementation passed its PHP 8.3 GitHub Actions validation, including real encoders and WordPress package integration against WordPress 6.6.11 and 7.1.4. See [VALIDATION.md](VALIDATION.md) for the run link, measured fixture results, and remaining limits. This verification does not include live website/PHP-FPM encoder availability or automatic WordPress media delivery.
+
 ## Requirements
 
 - WordPress 6.6 or later

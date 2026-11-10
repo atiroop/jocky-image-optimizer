@@ -16,6 +16,8 @@
 - `tests/integration/PluginIntegrationTest.php`: exercises the packaged plugin against the WordPress PHPUnit runtime, including lifecycle, admin pages, settings, diagnostics, and media fixture preservation.
 - `bin/install-wp-tests.sh`: pinned WP-CLI scaffold installer for an isolated WordPress core and test library; it must use a disposable database and temporary paths.
 
+Milestone 3 verification: GitHub Actions run [42735752617](https://github.com/atiroop/jocky-image-optimizer/actions/runs/42735752617) passed on PHP 8.3, including actual cwebp/avifenc conversions, independent dwebp/avifdec decoding, and the packaged-plugin WordPress 6.6.11/7.1.4 matrix. The run caught a WebP RIFF-size offset defect that was fixed before the passing run. It confirms behavior in the CI runner only; production PHP-FPM paths, binaries, policies, and resource limits still require environment-specific checks. See `VALIDATION.md` for the actual measurements and full limitations.
+
 The application has no third-party PHP runtime dependencies. Composer provides PSR-4 autoload metadata. Deployment/package creation runs Composer first and ships `vendor/` so WordPress does not need Composer.
 
 ## Safety boundaries
