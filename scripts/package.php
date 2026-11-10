@@ -5,7 +5,14 @@ declare(strict_types=1);
 $root    = dirname( __DIR__ );
 $build   = $root . DIRECTORY_SEPARATOR . 'build';
 $plugin_slug = 'jocky-image-optimizer';
-$zip_path    = $build . DIRECTORY_SEPARATOR . $plugin_slug . '-0.1.0-dev.zip';
+require_once __DIR__ . DIRECTORY_SEPARATOR . 'package-version.php';
+try {
+	$version = jio_package_version( $root );
+} catch ( RuntimeException $exception ) {
+	fwrite( STDERR, $exception->getMessage() . PHP_EOL );
+	exit( 1 );
+}
+$zip_path = $build . DIRECTORY_SEPARATOR . $plugin_slug . '-' . $version . '.zip';
 
 if ( ! class_exists( ZipArchive::class ) ) {
 	fwrite( STDERR, "PHP ZipArchive extension is required.\n" );
@@ -43,7 +50,7 @@ foreach ( $iterator as $item ) {
 	$absolute = $item->getPathname();
 	$relative = substr( $absolute, strlen( $root ) + 1 );
 	$relative = str_replace( DIRECTORY_SEPARATOR, '/', $relative );
-	if ( preg_match( '~^(?:\.git|build|tests|\.github|bin|scripts)(?:/|$)|(?:^|/)(?:\.gitignore|composer\.(?:json|lock)|phpcs\.xml\.dist|phpunit\.xml\.dist)$~', $relative ) ) {
+	if ( preg_match( '~^(?:\.git|build|tests|\.github|bin|scripts|AGENTS\.md|SPEC\.md|ROADMAP\.md|ARCHITECTURE\.md|VALIDATION\.md)(?:/|$)|(?:^|/)(?:\.gitignore|\.gitattributes|composer\.(?:json|lock)|phpcs\.xml\.dist|phpunit\.xml\.dist)$~', $relative ) ) {
 		continue;
 	}
 	if ( $item->isDir() ) {

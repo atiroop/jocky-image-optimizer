@@ -1,8 +1,115 @@
 # Validation
 
-## Milestone 4 implementation — CI repair in progress
+## Milestone 5 — safety closure (CI verified)
 
-The feature branch now contains WordPress Media Library queue integration. The code and integration coverage are implemented, but this section must not be read as CI verification until GitHub Actions completes successfully for the pushed commit.
+The feature implementation is on `feature/milestone-5-backup-restore`. This closure adds a default-off destructive recovery gate, stale-lease lock coordination, stronger unlink-boundary checks, independent worker tests, and migration retry tests. The latest closure commit `5642b386264b363c72c75f270fd46b7b6ef93063` passed all five jobs in [run 42796876298](https://github.com/atiroop/jocky-image-optimizer/actions/runs/42796876298). No production/VPS access or media modification was performed.
+
+The initial closure run [42796487189](https://github.com/atiroop/jocky-image-optimizer/actions/runs/42796487189) passed static/unit, real encoder, and PHPUnit integration tests but exposed a `wp eval-file` wrapper incompatibility with `strict_types` declarations. Removing those declarations fixed the scripts. Repair run [42796876298](https://github.com/atiroop/jocky-image-optimizer/actions/runs/42796876298) passed all five jobs, including both packaged WP-CLI matrix suites and the beta artifact job.
+
+| Check | Result | Evidence / limitation |
+|---|---|---|
+| WPCS | Passed locally and CI | `composer lint --no-interaction`: 0 errors and 0 warnings across 43 production files; `static-and-unit` also passed. |
+| Standalone tests | Passed locally | `composer test` passed all 30 standalone checks. |
+| Composer validation and audit | Passed locally | `composer validate --no-check-publish` valid; `composer audit --locked` found no advisories. |
+| PHP syntax | Passed locally and CI | Changed PHP files pass `php -l` on PHP 8.5.0; `static-and-unit` passed syntax checks on PHP 8.3. |
+| Workflow YAML/schema | Passed locally | `actionlint .github/workflows/ci.yml` passed; no workflow structure changes were needed. |
+| Production ZIP | Passed locally and CI | Built after `composer install --no-dev`; local `composer test:package` passed. The actual run 42785634155 artifact was downloaded and its 100,759-byte inner ZIP passed `php scripts/validate-package.php`. |
+| Real encoder integration | Passed in CI | `encoder-integration` installed trusted, pinned encoders and passed real fixtures. Local `composer test:encoders` stopped at the `cjpeg` preflight because encoder binaries are not installed locally. |
+| WordPress integration | Passed in CI | Both PHP 8.3 disposable production-ZIP jobs passed on WordPress 6.6.11 and 7.1.4, including failure-injection and admin request tests. This Windows workspace has no local WP-CLI, Docker/Podman, disposable core, or database runtime. |
+| Recovery WP-CLI | Passed in CI | Run 42796876298 passed both PHP 8.3 matrix smoke suites: fail-closed cleanup default, two-process single-job claim, lock exclusion, schema repair, and packaged cleanup/source retention. |
+| Original/media safety | Passed in CI with documented limits | Boundary regression catches WordPress metadata changes and derivative replacement between preview and unlink; CLI checks preserve source and derivative when another cleanup owns the lock. No production media was accessed. Hostile local-writer final unlink race remains a platform limitation. |
+| Artifact | Passed, available, and non-empty | Artifact `jocky-image-optimizer-0.4.0-beta`, ID `13755460104`, 96,617 bytes, is available from [run 42796876298](https://github.com/atiroop/jocky-image-optimizer/actions/runs/42796876298/artifacts/13755460104); digest `sha256:ebd7c6fbc66d2ab337297640f851cb6cbba1a8a515a2693ca6af742e42ef7f43`. The packaged ZIP was built and installed in both disposable WordPress jobs. The prior downloaded artifact and inner ZIP structure remain validated above. |
+| Filesystem race boundary | Limitation documented | Uses canonical uploads confinement, symlink rejection, streamed digests, device/inode/size/mtime identity recheck, and shared MySQL advisory locks. PHP cannot eliminate the final unlink TOCTOU window against a hostile local writer; uploads directories must be writable only by trusted site processes. |
+| Recovery default gate | Implemented and CI verified | Service returns `cleanup_disabled`; admin, CLI and worker paths check the same gate. Gate requires explicit `JIO_ENABLE_DESTRUCTIVE_RECOVERY=true` and WordPress environment `local` or `development`. Production/staging default remains read-only. |
+| New CI recovery/migration checks | Passed | Run 42796876298 passed the synchronized database barrier, lock exclusion, default-off cleanup rejection, and partial-schema retry preserving existing rows. |
+
+Implemented behavior includes schema-v2 derivative registry/audit/batch tables, bounded verification and legacy indexing, read-only previews, history, and WP-CLI recovery commands. Destructive cleanup is disabled by default, including in production and staging, and is available only when explicitly enabled in a local/development environment. The digest manifest is not an independent backup: missing/corrupt originals require UpdraftPlus or another verified external backup. Hashing is limited to 50 MiB per file and 100 MiB per operation; ambiguous or over-limit files fail closed. WordPress core metadata updates, attachment deletion, and external restore do not use the plugin lock; the new default gate avoids exposing cleanup to those unsynchronized races.
+
+### Requirements acceptance matrix
+
+| Requirement | Status | Implemented | Tested | Evidence | Remaining gap |
+|---|---|---|---|---|
+| 14. Frontend delivery readiness architecture | PASS WITH DOCUMENTED LIMITATION | Documentation only; delivery stays off | Document review | `ARCHITECTURE.md` describes derivative mapping, responsive `srcset`, `<picture>` fallback, Elementor, WP Rocket, and separate Cloudflare/R2 design | No frontend URL or markup integration is activated or tested; intentionally future work |
+| 15. Duplicate `WP_DEBUG` warning and bulk scan progress | PASS WITH DOCUMENTED LIMITATION | Progress normalization fixed; warning source not established | Progress regression passed CI; latest disposable WP-CLI smoke captured no duplicate warning | `BulkScanner::state()` supplies fields consumed by `assets/admin.js`. No duplicate define in tracked source or latest CLI output | The originally reported warning remains unreproduced; no source lines supplied and no production config inspection |
+| 16. Recovery integrity, safety, DB failures, concurrency, security, WP-CLI | PASS WITH DOCUMENTED LIMITATION | Destructive cleanup defaults off; backend gate plus boundary rechecks; stale recovery uses attachment lock | Run 42796876298 passed independent-process claim, cleanup exclusion, migration and gate smoke on both WP versions | External WordPress deletion/metadata changes and restore do not share the plugin lock; default gate contains cleanup risk. Filesystem TOCTOU after final check remains. |
+| 17. CI preservation and required jobs | PASS | Existing five-job matrix retained; workflow definition unchanged | All five jobs passed in run 42796876298 | No CI run reproduces production ownership or hostile local filesystem writers |
+| 18. Performance bounds | PASS WITH DOCUMENTED LIMITATION | Bounded hashing/pages/cleanup | Prior CI exercised pagination and cleanup; code review | Streamed 1 MiB blocks; 50 MiB/file and 100 MiB/call; pages and cleanup bounded to ten per worker tick | No production-scale memory/timing benchmark; over-limit files require operator handling |
+| 19. Production safety | PASS | No production operations performed | Activity review | No SSH, live files/database, media, server config, or site modifications | Future staging/deployment needs separate authorization |
+| 20. Documentation accuracy | PASS WITH DOCUMENTED LIMITATION | Docs updated with actual concurrency boundaries and backup semantics | Diff review | README and ARCHITECTURE explain source preservation, derivative ownership, cleanup, migration, external backup, inactive delivery | Core metadata/deletion/external restore races remain unresolved |
+| 21. Automated Git workflow | PASS | Scoped current branch work only | Git review | Authorized changes are limited to `feature/milestone-5-backup-restore`; no merge requested | No merge or deployment was performed |
+| 22. Original Milestone 5 definition of done | PASS WITH DOCUMENTED LIMITATION | Safety gate, queue coordination, migration repair and recovery behavior implemented | Run 42796876298 passed the added CLI and existing WordPress matrix suites | External core metadata/deletion and restore races remain outside plugin coordination; cleanup is disabled in production/staging |
+| 23. Final report | PASS | Findings and limitations recorded | This audit | Final response reports evidence, SHA and CI URL | Merge remains explicitly unauthorized; merge readiness is reported separately |
+
+### Original handoff acceptance criteria (sections 3–13)
+
+| Section | Acceptance result | Evidence / gap |
+|---|---|---|
+| 3. Scope and frontend readiness | Partial | Recovery/ownership/history/admin/CLI functionality exists; frontend delivery remains intentionally inactive and its future design is documented. |
+| 4. Backup architecture and original integrity manifest | Implemented | Bounded SHA-256 and WordPress references are recorded; no duplicate original backups; external backup restore is required for missing/corrupt bytes. |
+| 5. Derivative ownership registry | Implemented | Dedicated v2 tables hold relative paths/digests/encoder/lifecycle; arbitrary filename-based adoption is rejected; legacy import requires current source relation and exact expected derivative path. |
+| 6. Restore semantics | Implemented | Original delivery state is verified, not reconstructed; derivative cleanup is separate; missing/corrupt originals are referred to external backup. |
+| 7. Per-attachment recovery | Implemented; request regression passed | CI exercised missing/invalid nonce, invalid ID, non-admin, and missing confirmation; each was rejected before filesystem mutation. |
+| 8. Safe deletion | Disabled by default; gated implementation | Outside explicit local/development opt-in all deletion APIs return disabled. Gated path rechecks core metadata, attachment, record ownership, active jobs, source/derivative identity and core-managed paths. Boundary regressions passed in run 42796876298. Portable PHP cannot eliminate hostile-writer TOCTOU. |
+| 9. Bulk recovery | Preview implemented; deletion disabled by default | Dry-run summary and inventory remain read-only; backend admin, CLI, worker and service paths fail closed unless the local/development gate is explicitly enabled. |
+| 10. Optimization history | Implemented; semantic coverage partial | Persisted job/derivative/history state shown; separate derivatives do not necessarily reduce disk usage. History pagination and all lifecycle labels do not have dedicated assertion coverage. |
+| 11. Admin UI | Implemented; request regression passed | Escaped/capability/nonce-protected pages and row link exist. The real handler rejection checks passed in both WordPress jobs; no browser responsive UI test. |
+| 12. WP-CLI recovery commands | Implemented; CI verified | Packaged smoke covers synthetic verify/preview/cleanup and source retention, disabled-by-default cleanup and bulk-start rejection, independent process claims, lock exclusion and partial schema recovery. No separate `recovery worker` command exists; batch execution is `bulk --action=run`. |
+| 13. Queue coordination | Implemented; CI verified | Optimization and cleanup share a connection-scoped per-attachment advisory lock; stale recovery must acquire it before changing ownership. Queue updates remain atomic and token conditional. Two-process WP-CLI claim barrier passed. |
+
+### Restored Section 13 scenario assessment
+
+| Scenario | Status | Evidence and limit |
+|---|---|---|
+| Active image encoding and derivative promotion vs cleanup | PASS WITH DOCUMENTED LIMITATION | Both plugin paths acquire `AttachmentOperationLock` around processing/removal. A second DB connection holding the same advisory lock blocks acquisition; the integration assertion passed CI. No process-parallel encode/cleanup timing test is present. |
+| Queue retries and two workers claiming one job | Implemented; CI verified | Two independent WP-CLI processes wait on a database-backed barrier and contend for one pending synthetic row; run 42796876298 passed one token-owned claim and one empty result. |
+| Two cleanup workers targeting the same derivative | Implemented; CI verified | One independent DB connection holds the attachment advisory lock while another cleanup runs; the test returned `operation_locked` and preserved source and derivative. |
+| Lease loss/expiry and stale recovery | Implemented; CI verified | A stale job remained running with its token while a separate connection held the attachment lock; it recovered only after release. Existing tests cover token ownership/retry. |
+| WordPress attachment metadata update during cleanup | Safety gate plus boundary regression; CI verified | Regression mutates `_wp_attached_file` between preview and unlink; cleanup retains derivative and reports conflict. External core paths still do not acquire the lock. |
+| Attachment deletion during cleanup | Contained by default-off gate | Destructive cleanup is disabled outside explicitly enabled local/development environments. A concurrent core delete still cannot be fully serialized; no deletion hook can make core honor the plugin lock. |
+| Concurrent restore and cleanup | Contained by default-off gate | The plugin never restores original bytes; external backup tools remain outside its lock. Cleanup is disabled in production/staging. |
+| Cleanup failure recovery | PASS WITH DOCUMENTED LIMITATION | Integration tests inject failed registry insert, failed audit insert, failed pre-unlink lifecycle transition, and failed post-unlink status update; all passed CI. Post-unlink failures leave a visible conflict if the follow-up DB update works. |
+| Partial schema migration retry | Implemented; CI verified | WP-CLI smoke removes a recovery table, queue index/column, and seed row, retries `dbDelta`, simulates interruption before version persistence, and verifies job and derivative row preservation; passed in run 42796876298. |
+| Admin destructive request security | PASS WITH DOCUMENTED LIMITATION | Real WordPress handler tests for missing/invalid nonce, non-admin, invalid attachment ID, and missing confirmation passed before filesystem changes. Default-off gate checks passed in run 42796876298. |
+| Packaged WP-CLI recovery | Implemented; CI verified | Synthetic PNG/WebP smoke and default-off rejection, separate process claims, lock exclusion and migration retry passed in both packaged WordPress jobs. WP-CLI cannot establish admin HTTP authorization behavior. |
+
+### Warning investigation and migration/rollback notes
+
+The reported duplicate `WP_DEBUG` warning is not present in checked-out plugin sources, test bootstrap, workflow setup, or captured logs for runs 42776251310, 42780293142, and 42785634155; the latest packaged WP-CLI smoke also captured no duplicate warning. The plugin does not define `WP_DEBUG`. Its root cause remains unconfirmed and is likely outside the plugin, but that attribution is inference only. No production `wp-config.php` or live server was inspected. To resolve it, provide the exact warning and two file/line contexts with secrets redacted.
+
+The schema migration uses additive/idempotent `dbDelta` and advances the schema version only after required tables, columns, indexes, and seed rows are present. The disposable WP-CLI scenario passed in run 42796876298 after testing a missing recovery table, missing job index/column, missing seed slot, stale version state, an interrupted version write, and preservation of existing jobs/derivative rows. Rollback to an older plugin build leaves the new plugin tables and audit data orphaned but does not intentionally delete them; do not downgrade schema options manually. Destructive cleanup, when explicitly enabled for local/development testing, cannot be rolled back from plugin state because derivative bytes are deleted; originals remain. Back up the database and uploads before any staging/production install.
+
+### Risk classification
+
+| Risk | Class | Control / disposition |
+|---|---|---|
+| Original JPEG/PNG or WordPress thumbnail deleted by recovery | CRITICAL | No known optimizer path overwrites originals; cleanup is backend-disabled by default and rejects any derivative path currently referenced as a core source or thumbnail. Boundary regressions passed in run 42796876298. |
+| Unauthorized deletion request | CRITICAL | Capability and nonce checks remain on admin routes; WP-CLI requires explicit command invocation and confirmation. The cleanup gate is enforced in service, handler, CLI and worker layers; gate checks passed in run 42796876298. |
+| Cross-worker duplicate job claim / lease ownership transfer during live encoding | HIGH | Queue claims remain a single conditional InnoDB update with token ownership; stale recovery requires the shared attachment lock. Independent-process barrier and stale-lock checks passed in run 42796876298. |
+| Derivative cleanup races external metadata changes, attachment deletion or backup restore | HIGH when deletion enabled | These core/external operations cannot be made to honor the plugin lock. Destructive cleanup is unavailable by default and gated to explicit local/development test environments. Do not enable on production/staging. |
+| Interrupted schema upgrade leaves incomplete state | HIGH | `dbDelta` re-runs when tables/indexes/seeds are incomplete; version is written only after checks. Recovery/preservation scenario passed in run 42796876298. |
+| Unlink TOCTOU after final identity check | MEDIUM | Not eliminable portably in PHP; trusted uploads ownership is required. Default gate prevents production/staging cleanup. |
+| Duplicate `WP_DEBUG` diagnostic | LOW | Not reproduced in repository or CI logs; no plugin WP_DEBUG definition found. Source remains unconfirmed and no production config was inspected. |
+
+## Milestone 4.5 beta release — CI verified
+
+Target release: `0.4.0-beta`. The dedicated branch is `feature/milestone-4-5-beta-release`, based on verified main commit `092d5cfc26e6f83632c8a955ff46456fe14cc064`.
+
+The first beta release validation completed successfully in [GitHub Actions run 42752210121](https://github.com/atiroop/jocky-image-optimizer/actions/runs/42752210121), commit `8610c2e25f8a4e6a3bf9a98944002858f6a9ee6e`.
+
+| Check | Result | Evidence / limitation |
+|---|---|---|
+| Plugin version | Passed | Header and `JIO_VERSION` are both `0.4.0-beta`; the package builder derives its archive filename from the matching values. |
+| WPCS, PHP syntax, standalone tests | Passed | `static-and-unit` passed WPCS, PHP syntax, 30 standalone checks, Composer validation, and `composer audit --locked`. |
+| Real encoder integration | Passed | `encoder-integration` built pinned MozJPEG, installed pngquant/oxipng, and passed the real fixture suite. |
+| PHP 8.3 / WordPress 6.6.11 and 7.1.4 ZIP install | Passed | Both disposable WordPress/MySQL matrix jobs built and verified the production ZIP, installed it, activated it, and passed the WordPress integration suite, including database schema and worker-slot checks. |
+| JPEG/PNG derivative behavior | Passed | WP jobs used GD to create a JPEG fixture and `cwebp` to create derivatives. Tests covered JPEG/PNG queue processing, bounded batches/progress, default-off automatic optimization, missing encoder diagnostics, source hashes, and unchanged core attachment paths/metadata. |
+| Artifact publication | Passed | The gated `beta-package-artifact` job uploaded non-empty artifact `jocky-image-optimizer-0.4.0-beta` (69,999 bytes, Actions artifact ID `13734097455`). [Download artifact](https://github.com/atiroop/jocky-image-optimizer/actions/runs/42752210121/artifacts/13734097455). |
+| Downloaded production ZIP | Passed | Downloaded from the artifact and revalidated with `php scripts/validate-package.php`/ZipArchive `CHECKCONS`: one top-level root `jocky-image-optimizer/`, 52 entries, inner ZIP size 76,103 bytes, SHA-256 `237c7f9232bc9719f64b3f236141c378740350fbd8822ef3b30e5d21ea8c613c`. |
+| Local PHP runtime | Partial | This Windows workspace has PHP 8.5.0, not PHP 8.3. CI is the authoritative PHP 8.3 and disposable WordPress/MySQL validation. |
+
+## Milestone 4 implementation — CI verified
+
+The feature branch contains WordPress Media Library queue integration. Its final implementation checks passed in the run recorded below.
 
 | Check | Result | Evidence / limitation |
 |---|---|---|
@@ -63,18 +170,18 @@ Milestone 2 processing code has been added on `feature/milestone-2-image-engine`
 | Check | Result | Evidence / limitation |
 |---|---|---|
 | PHP runtime | Not fully verified | Local PHP is 8.5.0; PHP 8.3 is unavailable in this workspace. |
-| PHP syntax | Passed locally | `composer test` loaded the new API and exercised it on PHP 8.5.0. No PHP 8.3 execution was performed. |
+| PHP syntax | Passed locally and CI | `composer test` loaded the new API and exercised it on PHP 8.5.0; the PHP 8.3 static/unit job passed in [run 42729942236](https://github.com/atiroop/jocky-image-optimizer/actions/runs/42729942236). |
 | WPCS | Passed locally after remediation | Before: 215 errors and 34 warnings. After: `composer lint --no-interaction` reports 0 errors and 0 warnings. Scoped, explained WPCS exceptions cover native streaming filesystem calls, hard-link promotion, and `proc_open` argv execution because WordPress filesystem APIs do not provide these bounded/atomic local-file semantics. |
 | Standalone tests | Passed locally | `composer test --no-interaction`: 30 assertions passed, including valid PNG CRCs, invalid CRC, truncated/invalid structure, APNG detection, unsupported/empty data, outside-root rejection, no-benefit handling, bounded stdout/stderr capture, argv exit-code capture, and enforced process timeout. The copy adapter test does not claim compression or savings. |
 | Composer validation/audit | Passed locally | `composer validate --no-check-publish` is valid; `composer audit --locked` reports no advisories. |
-| Real encoder processing | Not available locally; CI configured | `composer test:encoders` was attempted and stopped at the explicit preflight because `cjpeg` is unavailable; `djpeg`, `jpegtran`, `pngquant`, and `oxipng` are also absent. No system packages were installed. The new Ubuntu/PHP 8.3 encoder job builds MozJPEG from upstream commit `38f37cf900958c1004c2eea945a773764ba20716`, installs Ubuntu's `pngquant`, and installs oxipng `9.1.2` with Cargo `--locked`. It has not yet run on GitHub, so real optimization is not claimed as passed. |
-| WordPress integration | Not run for this milestone | PHP 8.3, WordPress test core, and disposable database are unavailable locally. The Milestone 1.5 CI run documents the prior foundation only, not the new engine. |
+| Real encoder processing | Passed in CI; unavailable locally | `composer test:encoders` stopped at preflight because encoder tools are not installed locally. The Ubuntu/PHP 8.3 job built pinned MozJPEG, installed pngquant and oxipng `9.1.2`, and passed real fixtures in [run 42729942236](https://github.com/atiroop/jocky-image-optimizer/actions/runs/42729942236). |
+| WordPress integration | Passed in CI; unavailable locally | PHP 8.3, WordPress test core, and disposable database are unavailable locally. Both disposable WordPress matrix jobs passed in [run 42729942236](https://github.com/atiroop/jocky-image-optimizer/actions/runs/42729942236). |
 | Installable ZIP | Passed locally | After remediation, `composer install --no-dev --no-interaction --optimize-autoloader`, `php scripts/package.php`, and `composer test:package` passed; development dependencies were restored afterward. |
 | WordPress media safety | Scope review only | No upload/attachment hooks were added. Tests verify separate-output behavior with a copy adapter; no production media was accessed. |
 
-Remaining engineering limitations: IDAT decompression and JPEG entropy stream validation are performed by the actual encoder rather than the PHP structure parser; metadata validation checks detected categories, not byte-for-byte metadata equality. The engine assumes managed root directories are trusted against hostile local users because portable PHP cannot remove every path TOCTOU race. Process timeouts terminate the direct child but cannot portably guarantee termination of descendants. Actual encoder behavior, PHP 8.3 execution, the new GitHub workflow, and this revision's WordPress package integration still need verification. No GitHub workflow was run for this milestone.
+Remaining engineering limitations: IDAT decompression and JPEG entropy stream validation are performed by the actual encoder rather than the PHP structure parser; metadata validation checks detected categories, not byte-for-byte metadata equality. The engine assumes managed root directories are trusted against hostile local users because portable PHP cannot remove every path TOCTOU race. Process timeouts terminate the direct child but cannot portably guarantee termination of descendants. CI validates the Ubuntu runner and configured WordPress matrix; it does not prove encoder availability or behavior on production servers.
 
-Status: **partially verified**. Validation performed on 2026-11-09 in the Windows development workspace. No production site, VPS, or user media was accessed.
+Status: **CI verified, with documented limits**. Validation performed locally on PHP 8.5.0 and in GitHub Actions on PHP 8.3. No production site, VPS, or user media was accessed for Milestone 2.
 
 | Check | Result | Evidence / limitation |
 |---|---|---|

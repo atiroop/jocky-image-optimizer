@@ -145,14 +145,25 @@ final class BulkScanner {
 	 * @return array<string, int|string> Scan state.
 	 */
 	public function state(): array {
-		$state = get_option( self::STATE, array() );
-		return is_array( $state ) ? $state : array(
+		$state    = get_option( self::STATE, array() );
+		$defaults = array(
 			'status'       => 'idle',
 			'last_id'      => 0,
 			'scanned'      => 0,
 			'jobs_added'   => 0,
 			'total_images' => $this->count_attachments(),
 		);
+		if ( ! is_array( $state ) ) {
+			return $defaults;
+		}
+		$state = array_merge( $defaults, $state );
+		if ( ! in_array( $state['status'], array( 'idle', 'scanning', 'paused', 'cancelled', 'complete' ), true ) ) {
+			$state['status'] = 'idle';
+		}
+		foreach ( array( 'last_id', 'scanned', 'jobs_added', 'total_images' ) as $counter ) {
+			$state[ $counter ] = max( 0, (int) $state[ $counter ] );
+		}
+		return $state;
 	}
 
 	/** Counts candidate MIME types using one bounded aggregate query.

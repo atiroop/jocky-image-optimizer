@@ -9,11 +9,26 @@ declare(strict_types=1);
 
 namespace Jocky\ImageOptimizer\Queue;
 
+use Jocky\ImageOptimizer\Recovery\AttachmentOperationLock;
+
 // phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Queue reads must reflect current persisted state; transactional claims cannot use the object cache.
 // phpcs:disable WordPress.DB.PreparedSQL.InterpolatedNotPrepared, WordPress.DB.PreparedSQL.NotPrepared -- Identifiers are derived only from the trusted WordPress table prefix; all dynamic data values use $wpdb->prepare().
 
 /** Persists idempotent jobs and claims them with InnoDB row locks. */
 final class JobRepository {
+	/** Optional independent connection used by integration concurrency checks.
+	 *
+	 * @var \wpdb|null
+	 */
+	private ?\wpdb $connection;
+
+	/** Creates a repository, optionally bound to a specific database connection.
+	 *
+	 * @param \wpdb|null $connection Database connection.
+	 */
+	public function __construct( ?\wpdb $connection = null ) {
+		$this->connection = $connection;
+	}
 
 	public const MAX_ATTEMPTS  = 3;
 	public const STALE_SECONDS = 600;
@@ -129,16 +144,17 @@ final class JobRepository {
 		$wpdb->query( $wpdb->prepare( 'UPDATE ' . QueueSchema::slots_table() . ' SET lock_token = NULL, locked_at = NULL WHERE lock_token = %s', $token ) );
 	}
 
-	/** Claims one ready job under a transaction and worker token.
+	/** Atomically claims one ready job with a conditional InnoDB update and worker token.
 	 *
 	 * @param string $token Ownership token.
 	 * @return array<string, mixed>|null Claimed job.
 	 */
 	public function claim_next( string $token ): ?array {
 		global $wpdb;
+		$db      = $this->connection ?? $wpdb;
 		$table   = QueueSchema::jobs_table();
-		$updated = $wpdb->query(
-			$wpdb->prepare(
+		$updated = $db->query(
+			$db->prepare(
 				"UPDATE {$table} SET status = 'running', attempts = attempts + 1, lock_token = %s, locked_at = UTC_TIMESTAMP(), started_at = UTC_TIMESTAMP(), updated_at = UTC_TIMESTAMP(), error_code = NULL WHERE status = 'pending' AND available_at <= UTC_TIMESTAMP() ORDER BY id ASC LIMIT 1",
 				$token
 			)
@@ -146,22 +162,41 @@ final class JobRepository {
 		if ( 1 !== $updated ) {
 			return null;
 		}
-		$job = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$table} WHERE status = 'running' AND lock_token = %s ORDER BY id DESC LIMIT 1", $token ), ARRAY_A );
+		$job = $db->get_row( $db->prepare( "SELECT * FROM {$table} WHERE status = 'running' AND lock_token = %s ORDER BY id DESC LIMIT 1", $token ), ARRAY_A );
 		return is_array( $job ) ? $job : null;
 	}
 
-	/** Returns expired running jobs to the queue or marks exhausted jobs failed. */
+	/** Returns stale running jobs to the queue only after acquiring their shared attachment lock.
+	 *
+	 * A live optimizer holds the same lock, so an expired timestamp alone cannot transfer ownership.
+	 */
 	public function recover_stale(): void {
 		global $wpdb;
 		$table = QueueSchema::jobs_table();
-		$wpdb->query(
-			$wpdb->prepare(
-				"UPDATE {$table} SET status = IF(attempts >= %d,'failed','pending'), available_at = UTC_TIMESTAMP(), finished_at = IF(attempts >= %d,UTC_TIMESTAMP(),NULL), lock_token = NULL, locked_at = NULL, error_code = 'stale_worker_recovered', updated_at = UTC_TIMESTAMP() WHERE status = 'running' AND locked_at < DATE_SUB(UTC_TIMESTAMP(), INTERVAL %d SECOND)",
-				self::MAX_ATTEMPTS,
-				self::MAX_ATTEMPTS,
-				self::STALE_SECONDS
-			)
+		$stale = (array) $wpdb->get_results(
+			$wpdb->prepare( "SELECT id,attachment_id FROM {$table} WHERE status = 'running' AND locked_at < DATE_SUB(UTC_TIMESTAMP(), INTERVAL %d SECOND) ORDER BY id ASC LIMIT %d", self::STALE_SECONDS, self::MAX_BATCH ),
+			ARRAY_A
 		);
+		$locks = new AttachmentOperationLock();
+		foreach ( $stale as $job ) {
+			$attachment_id = (int) $job['attachment_id'];
+			if ( ! $locks->acquire( $attachment_id ) ) {
+				continue;
+			}
+			try {
+				$wpdb->query(
+					$wpdb->prepare(
+						"UPDATE {$table} SET status = IF(attempts >= %d,'failed','pending'), available_at = UTC_TIMESTAMP(), finished_at = IF(attempts >= %d,UTC_TIMESTAMP(),NULL), lock_token = NULL, locked_at = NULL, error_code = 'stale_worker_recovered', updated_at = UTC_TIMESTAMP() WHERE id = %d AND status = 'running' AND locked_at < DATE_SUB(UTC_TIMESTAMP(), INTERVAL %d SECOND)",
+						self::MAX_ATTEMPTS,
+						self::MAX_ATTEMPTS,
+						(int) $job['id'],
+						self::STALE_SECONDS
+					)
+				);
+			} finally {
+				$locks->release( $attachment_id );
+			}
+		}
 	}
 
 	/** Marks a job completed or skipped only when its worker still owns it.
@@ -244,7 +279,7 @@ final class JobRepository {
 		}
 		$stats['completed_attachments'] = (int) $wpdb->get_var( "SELECT COUNT(DISTINCT attachment_id) FROM {$table} WHERE status IN ('completed','skipped')" );
 		$stats['bytes_saved']           = (int) $wpdb->get_var( "SELECT COALESCE(SUM(bytes_saved),0) FROM {$table} WHERE status = 'completed'" );
-		$stats['average_savings']       = (float) $wpdb->get_var( "SELECT COALESCE(AVG((input_bytes-output_bytes)/input_bytes*100),0) FROM {$table} WHERE status = 'completed' AND input_bytes > 0" );
+		$stats['average_savings']       = (float) $wpdb->get_var( "SELECT COALESCE(AVG((CAST(input_bytes AS SIGNED)-CAST(output_bytes AS SIGNED))/input_bytes*100),0) FROM {$table} WHERE status = 'completed' AND input_bytes > 0" );
 		return $stats;
 	}
 

@@ -10,6 +10,14 @@ declare(strict_types=1);
 // WordPress's test bootstrap prints status text before admin header checks run.
 ob_start();
 
+// The disposable WordPress integration suite opts in only to exercise guarded deletion code.
+if ( ! defined( 'JIO_ENABLE_DESTRUCTIVE_RECOVERY' ) ) {
+	define( 'JIO_ENABLE_DESTRUCTIVE_RECOVERY', true );
+}
+if ( ! defined( 'WP_ENVIRONMENT_TYPE' ) ) {
+	define( 'WP_ENVIRONMENT_TYPE', 'local' );
+}
+
 $tests_dir = getenv( 'WP_TESTS_DIR' );
 if ( ! is_string( $tests_dir ) || '' === $tests_dir ) {
 	$tests_dir = rtrim( sys_get_temp_dir(), '/\\' ) . DIRECTORY_SEPARATOR . 'wordpress-tests-lib';
