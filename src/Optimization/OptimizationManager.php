@@ -55,7 +55,13 @@ final class OptimizationManager {
 			$input       = $source_info->bytes;
 			$format      = $source_info->mime;
 			if ( $source_info->animated ) {
-				throw new OptimizationException( 'unsupported_animation', 'Animated PNG files are not supported by this engine.' );
+				throw new OptimizationException( 'unsupported_animation', 'Animated image inputs are not supported by this engine.' );
+			}
+			if ( OptimizationRequest::OUTPUT_SOURCE !== $request->output_format && ( isset( $source_info->metadata['exif'] ) || isset( $source_info->metadata['exif_xmp'] ) ) ) {
+				throw new OptimizationException( 'orientation_unsupported', 'EXIF-bearing sources are rejected because the engine cannot guarantee orientation preservation during conversion.' );
+			}
+			if ( OptimizationRequest::OUTPUT_SOURCE !== $request->output_format && $request->preserve_metadata && array() !== $source_info->metadata ) {
+				throw new OptimizationException( 'metadata_preservation_unsupported', 'The selected conversion cannot guarantee faithful preservation of source metadata and orientation.' );
 			}
 			$encoder = $this->encoders->get( $request->encoder_id );
 			if ( null === $encoder || ! in_array( $format, $encoder->supported_mime_types(), true ) || ! in_array( $request->mode, $encoder->supported_modes(), true ) ) {
@@ -64,7 +70,16 @@ final class OptimizationManager {
 			if ( ! $encoder->is_available() ) {
 				return $this->result( $format, $input, null, $request->encoder_id, $started, OptimizationResult::UNAVAILABLE, 'encoder_unavailable', null );
 			}
-			$temporary = $this->temporary_files->create( dirname( $destination ), strtolower( '.tmp' ) );
+			$target_mime = match ( $request->output_format ) {
+				OptimizationRequest::OUTPUT_WEBP => 'image/webp',
+				OptimizationRequest::OUTPUT_AVIF => 'image/avif',
+				default => $format,
+			};
+			if ( ( 'cwebp' === $request->encoder_id && OptimizationRequest::OUTPUT_WEBP !== $request->output_format ) || ( 'avifenc' === $request->encoder_id && OptimizationRequest::OUTPUT_AVIF !== $request->output_format ) || ( ! in_array( $request->encoder_id, array( 'cwebp', 'avifenc' ), true ) && OptimizationRequest::OUTPUT_SOURCE !== $request->output_format ) ) {
+				return $this->result( $format, $input, null, $request->encoder_id, $started, OptimizationResult::UNSUPPORTED, 'output_format_mismatch', null );
+			}
+			$suffix    = 'image/webp' === $target_mime ? '.webp' : ( 'image/avif' === $target_mime ? '.avif' : '.tmp' );
+			$temporary = $this->temporary_files->create( dirname( $destination ), $suffix );
 			$execution = $encoder->optimize( $source, $temporary, $request );
 			if ( EncoderExecution::SKIPPED === $execution->status ) {
 				return $this->result( $format, $input, null, $encoder->id(), $started, OptimizationResult::SKIPPED, $execution->error_category, null );
@@ -73,16 +88,23 @@ final class OptimizationManager {
 				throw new OptimizationException( 'source_changed', 'The source image changed during processing.' );
 			}
 			$output_info = $this->validator->inspect( $temporary, $request );
-			if ( $output_info->mime !== $format || $output_info->width !== $source_info->width || $output_info->height !== $source_info->height ) {
+			if ( $output_info->animated ) {
+				throw new OptimizationException( 'output_validation_failed', 'The encoder output unexpectedly contains animation.' );
+			}
+			if ( $output_info->mime !== $target_mime || $output_info->width !== $source_info->width || $output_info->height !== $source_info->height ) {
 				throw new OptimizationException( 'output_validation_failed', 'The encoder output format or dimensions do not match the source.' );
 			}
-			if ( $request->preserve_metadata && array_diff_key( $source_info->metadata, $output_info->metadata ) ) {
+			if ( $source_info->alpha && ! $output_info->alpha ) {
+				throw new OptimizationException( 'alpha_validation_failed', 'The output does not contain the source alpha channel.' );
+			}
+			if ( OptimizationRequest::OUTPUT_SOURCE === $request->output_format && $request->preserve_metadata && array_diff_key( $source_info->metadata, $output_info->metadata ) ) {
 				throw new OptimizationException( 'metadata_validation_failed', 'The encoder output did not retain all detected source metadata.' );
 			}
 			$output = $output_info->bytes;
 			$saved  = $input - $output;
-			if ( $saved <= 0 ) {
-				return $this->result( $format, $input, $output, $encoder->id(), $started, OptimizationResult::SKIPPED, 'no_size_benefit', null );
+			if ( $saved <= 0 && ! $request->allow_larger_output ) {
+				$status = OptimizationRequest::OUTPUT_SOURCE === $request->output_format ? OptimizationResult::SKIPPED : OptimizationResult::NO_SAVINGS;
+				return $this->result( $format, $input, $output, $encoder->id(), $started, $status, 'no_size_benefit', null );
 			}
 			$this->replacer->commit( $temporary, $destination, $source );
 			$this->temporary_files->forget( $temporary );

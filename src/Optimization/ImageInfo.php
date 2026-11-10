@@ -19,6 +19,7 @@ final class ImageInfo {
 	 * @param int                 $bytes    Measured source bytes.
 	 * @param array<string, bool> $metadata Detected metadata categories.
 	 * @param bool                $animated Whether the image is animated.
+	 * @param bool                $alpha    Whether the image has transparency.
 	 */
 	public function __construct(
 		public readonly string $mime,
@@ -26,6 +27,7 @@ final class ImageInfo {
 		public readonly int $height,
 		public readonly int $bytes,
 		public readonly array $metadata = array(),
-		public readonly bool $animated = false
+		public readonly bool $animated = false,
+		public readonly bool $alpha = false
 	) {}
 }

@@ -1,6 +1,8 @@
 # Jocky Image Optimizer
 
-Jocky Image Optimizer is a self-hosted WordPress plugin for local image optimization. This development release implements the plugin foundation, WordPress integration validation, and a developer-facing JPEG/PNG processing API. Processing is explicit and writes a separate output file; uploads, attachments, thumbnails, and metadata are not hooked or modified.
+Jocky Image Optimizer is a self-hosted WordPress plugin for local image optimization. The development release includes explicit JPEG/PNG optimization and JPEG/PNG-to-WebP/AVIF conversion APIs. Every operation writes a separate output file; uploads, attachments, thumbnails, and metadata are not hooked or modified.
+
+Milestone 3’s WebP/AVIF implementation passed its PHP 8.3 GitHub Actions validation, including real encoders and WordPress package integration against WordPress 6.6.11 and 7.1.4. See [VALIDATION.md](VALIDATION.md) for the run link, measured fixture results, and remaining limits. This verification does not include live website/PHP-FPM encoder availability or automatic WordPress media delivery.
 
 ## Requirements
 
@@ -12,7 +14,7 @@ Jocky Image Optimizer is a self-hosted WordPress plugin for local image optimiza
 - Disposable MySQL 8.0/MariaDB test database for WordPress integration tests
 - A Linux server is recommended for future command-line encoder integrations. Windows is supported for development, but server encoder availability and behavior must be checked on the target Linux host.
 
-Image processing requires locally installed `jpegtran`, `djpeg` plus MozJPEG-compatible `cjpeg`, `pngquant`, or `oxipng`, depending on the selected adapter. No encoder is required to activate the plugin. The dashboard reports detected libraries and binaries. It never installs system packages.
+Image processing requires locally installed `jpegtran`, `djpeg` plus MozJPEG-compatible `cjpeg`, `pngquant`, `oxipng`, `cwebp`, or `avifenc`, depending on the selected adapter. Independent test decoding uses `dwebp` and `avifdec`. No encoder is required to activate the plugin. The dashboard reports detected libraries and binaries. It never installs system packages.
 
 ## Development installation
 
@@ -25,7 +27,28 @@ To produce an installable ZIP, install production dependencies as above, then ru
 
 ## Current behavior
 
-Settings are registered through the WordPress Settings API, capability-gated with `manage_options`, nonce-protected by `settings_fields()`, and sanitized on save. Worker concurrency is deliberately pinned to one. Displayed capability information comes from the running PHP process and filesystem PATH; it is not simulated. `OptimizationManager` offers an explicit source-to-separate-output API with path confinement, size/pixel/time bounds, encoder argv execution without shell interpolation, output validation, no-clobber promotion, and measured result reporting. It is not connected to WordPress media hooks or admin controls.
+Settings are registered through the WordPress Settings API, capability-gated with `manage_options`, nonce-protected by `settings_fields()`, and sanitized on save. Worker concurrency is deliberately pinned to one. Displayed capability information comes from the running PHP process and filesystem PATH; it is not simulated. `OptimizationManager` offers an explicit source-to-separate-output API with path confinement, size/pixel/time bounds, encoder argv execution without shell interpolation, output validation, no-clobber promotion, and measured result reporting. Select `OptimizationRequest::OUTPUT_WEBP` or `OUTPUT_AVIF` with encoder ID `cwebp` or `avifenc`. Both accept lossy and lossless modes. The shared request quality setting is restricted to 1–100 and maps to cwebp quality. The AVIF adapter detects its version: libavif 1.2+ receives `--qcolor`, while older releases map this scale onto their 0–63 quantizer; these values are not perceptually equivalent to WebP quality. AVIF speed is independently configurable from 0 (slowest) to 10 (fastest), default 6; the adapter uses at most two encoder threads and keeps alpha lossless in lossy color mode. Larger derivatives are rejected by default and retained only when `allow_larger_output` is explicitly true. Conversion requires `preserve_metadata=false`; EXIF-bearing sources are rejected in all modes because their orientation cannot be safely established and preserved. Other detected source metadata is rejected while preservation is requested. This is not connected to WordPress media hooks or admin controls.
+
+```php
+use Jocky\ImageOptimizer\Optimization\OptimizationRequest;
+
+$request = new OptimizationRequest(
+    $jpeg_path,
+    $webp_path,
+    'cwebp',
+    OptimizationRequest::MODE_LOSSY,
+    78,
+    60,
+    false,
+    52428800,
+    40000000,
+    120000,
+    OptimizationRequest::OUTPUT_WEBP
+);
+$result = $optimization_manager->optimize( $request );
+```
+
+The constructor takes source and destination paths, encoder ID, mode, quality, minimum quality, metadata policy, input-byte and pixel limits, timeout milliseconds, output MIME type, larger-output policy, and AVIF speed in that order. Only paths beneath the manager's configured roots are accepted.
 
 Activation adds defaults only when no settings option exists. Deactivation has no scheduled jobs to clean up. Uninstall behavior is not defined and no media, backups, or records are removed.
 
@@ -47,7 +70,7 @@ composer test:integration
 
 `composer test` contains dependency-free unit checks with WordPress API stubs. `composer test:integration` runs against a real WordPress core and disposable database; it installs and activates the generated ZIP, not the development source. See [VALIDATION.md](VALIDATION.md) for actual execution status and limitations.
 
-`composer test:encoders` runs deterministic real-image integration checks and requires `cjpeg`, `djpeg`, `jpegtran`, `pngquant`, `oxipng`, and PHP GD. The isolated `encoder-integration` GitHub job builds MozJPEG from an exact upstream commit, installs `pngquant` from Ubuntu 24.04 packages, and installs a locked oxipng release through Cargo. It does not download prebuilt encoder binaries. Run this test only on a disposable development/CI runner; it writes temporary fixtures and outputs.
+`composer test:encoders` runs deterministic real-image integration checks and requires `cjpeg`, `djpeg`, `jpegtran`, `pngquant`, `oxipng`, `cwebp`, `avifenc`, `dwebp`, `avifdec`, and PHP GD. The isolated CI job builds/installs encoders from trusted Linux package or upstream sources and uses independent decoders for generated output. It does not download arbitrary prebuilt binaries. The fixed fixtures contain gradients, sharp color boundaries, and transparent samples; benchmark numbers are reported by the test run and are not universal performance claims. Run this test only on a disposable development/CI runner; it writes temporary fixtures and outputs.
 
 ### Local WordPress integration setup
 
@@ -72,7 +95,7 @@ The installer puts WordPress core and test files under `TMPDIR`; remove that uni
 
 ## Security and scope
 
-The processing API executes only known local encoder binaries when explicitly called. It does not use shell command strings, auto-install tools, or accept executable paths from request data. Lossy adapters require metadata preservation to be disabled because they cannot guarantee retention. APNG is rejected. Cloudflare R2, bulk jobs, upload hooks, backups/restoration, and automatic media mutation remain deferred.
+The processing API executes only known local encoder binaries when explicitly called. It does not use shell command strings, auto-install tools, or accept executable paths from request data. Cross-format conversion rejects EXIF-bearing sources because it cannot guarantee orientation handling; other detected metadata requires an explicit opt-out and may be stripped. APNG and animated WebP/AVIF are rejected. AVIF structural validation checks bounded ISO-BMFF box structure and primary dimensions; independent decoder acceptance is an integration-test check, not runtime verification. Runtime validation cannot establish perceptual equivalence. Cloudflare R2, bulk jobs, upload hooks, backups/restoration, and automatic media mutation remain deferred.
 
 ## License
 

@@ -32,6 +32,8 @@ final class CapabilityDetector {
 			'jpegtran' => $this->binary_result( array( 'jpegtran' ) ),
 			'pngquant' => $this->binary_result( array( 'pngquant' ) ),
 			'oxipng'   => $this->binary_result( array( 'oxipng' ) ),
+			'cwebp'    => $this->binary_result( array( 'cwebp' ) ),
+			'avifenc'  => $this->binary_result( array( 'avifenc' ) ),
 		);
 	}
 

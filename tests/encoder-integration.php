@@ -10,6 +10,8 @@ declare(strict_types=1);
 require dirname( __DIR__ ) . '/vendor/autoload.php';
 
 use Jocky\ImageOptimizer\Optimization\EncoderRegistry;
+use Jocky\ImageOptimizer\Optimization\AvifEncoder;
+use Jocky\ImageOptimizer\Optimization\CwebpEncoder;
 use Jocky\ImageOptimizer\Optimization\EncoderExecution;
 use Jocky\ImageOptimizer\Optimization\EncoderInterface;
 use Jocky\ImageOptimizer\Optimization\ImageValidator;
@@ -37,6 +39,18 @@ final class InvalidOutputEncoder implements EncoderInterface {
 	}
 }
 
+/** Test-only adapter that returns a truncated WebP container. */
+final class InvalidWebpOutputEncoder implements EncoderInterface {
+	public function id(): string { return 'cwebp'; }
+	public function supported_mime_types(): array { return array( 'image/png' ); }
+	public function supported_modes(): array { return array( OptimizationRequest::MODE_LOSSY ); }
+	public function is_available(): bool { return true; }
+	public function optimize( string $source_path, string $temporary_output_path, OptimizationRequest $request ): EncoderExecution {
+		file_put_contents( $temporary_output_path, "RIFF\x04\0\0\0WEBP" );
+		return new EncoderExecution( EncoderExecution::COMPLETE );
+	}
+}
+
 $assert = static function ( bool $condition, string $message ): void {
 	if ( ! $condition ) {
 		fwrite( STDERR, "FAIL: {$message}\n" );
@@ -58,13 +72,15 @@ $registry = new EncoderRegistry(
 		new JpegtranEncoder( $binaries, $runner ),
 		new PngquantEncoder( $binaries, $runner ),
 		new OxipngEncoder( $binaries, $runner ),
+		new CwebpEncoder( $binaries, $runner ),
+		new AvifEncoder( $binaries, $runner ),
 	)
 );
 $manager = new OptimizationManager( new PathGuard( array( $root ) ), new ImageValidator(), $registry, new TemporaryFileManager(), new SafeFileReplacer() );
 $validator = new ImageValidator();
 
 try {
-	foreach ( array( 'cjpeg', 'djpeg', 'jpegtran', 'pngquant', 'oxipng' ) as $binary_id ) {
+	foreach ( array( 'cjpeg', 'djpeg', 'jpegtran', 'pngquant', 'oxipng', 'cwebp', 'avifenc', 'dwebp', 'avifdec' ) as $binary_id ) {
 		$assert( null !== $binaries->locate( $binary_id ), sprintf( 'required real encoder %s is installed', $binary_id ) );
 	}
 	$ppm = $root . DIRECTORY_SEPARATOR . 'fixture.ppm';
@@ -128,6 +144,38 @@ try {
 	imagedestroy( $gd_png );
 	$assert( 127 === $alpha_pixel['alpha'], 'pngquant output retains the fully transparent sample pixel' );
 
+	$convert = static function ( string $source, string $encoder, string $format, string $mode, bool $alpha_expected = false ) use ( $manager, $root, $validator, $assert, $runner, $binaries ): void {
+		$extension = 'image/webp' === $format ? 'webp' : 'avif';
+		$output = $root . DIRECTORY_SEPARATOR . basename( $source ) . '.' . $extension . '.' . $mode;
+		$before = hash_file( 'sha256', $source );
+		$request = new OptimizationRequest( $source, $output, $encoder, $mode, 78, 60, false, 52428800, 40000000, 180000, $format, true, 6 );
+		$result = $manager->optimize( $request );
+		$assert( 'optimized' === $result->status && null !== $result->output_bytes && is_file( $output ), sprintf( '%s to %s conversion produces a measured output (status: %s; error: %s)', mime_content_type( $source ), $format, $result->status, $result->error_category ?? 'none' ) );
+		$assert( $before === hash_file( 'sha256', $source ), 'source bytes remain unchanged after conversion' );
+		$info = $validator->inspect( $output, $request );
+		$assert( $format === $info->mime && $info->width === 256 && $info->height === 256, sprintf( '%s output structure and dimensions validate', $format ) );
+		$decoder = $binaries->locate( 'image/webp' === $format ? 'dwebp' : 'avifdec' );
+		$decoded = $output . '.decoded.png';
+		$decode_args = 'image/webp' === $format ? array( $output, '-o', $decoded ) : array( $output, $decoded );
+		$decode_result = $runner->run( (string) $decoder, $decode_args, 30 );
+		$assert( 0 === $decode_result->exit_code && is_file( $decoded ), sprintf( 'independent %s decoder accepts output', $format ) );
+		$decoded_image = imagecreatefrompng( $decoded );
+		$assert( false !== $decoded_image && imagesx( $decoded_image ) === 256 && imagesy( $decoded_image ) === 256, 'independent decoder confirms output dimensions' );
+		if ( false !== $decoded_image && $alpha_expected ) {
+			$pixel = imagecolorsforindex( $decoded_image, imagecolorat( $decoded_image, 0, 0 ) );
+			$assert( 127 === $pixel['alpha'], sprintf( 'transparent PNG alpha survives %s conversion and independent decode', $format ) );
+		}
+		if ( false !== $decoded_image ) { imagedestroy( $decoded_image ); }
+		$assert( $result->input_bytes === filesize( $source ) && $result->output_bytes === filesize( $output ) && is_float( $result->duration_milliseconds ), 'conversion reports actual byte counts and elapsed time' );
+		printf( "BENCHMARK %s -> %s: %d to %d bytes, %.1f ms\n", basename( $source ), $format, $result->input_bytes, $result->output_bytes, $result->duration_milliseconds );
+	};
+	$convert( $jpeg_source, 'cwebp', OptimizationRequest::OUTPUT_WEBP, OptimizationRequest::MODE_LOSSY );
+	$convert( $jpeg_source, 'avifenc', OptimizationRequest::OUTPUT_AVIF, OptimizationRequest::MODE_LOSSY );
+	$convert( $png, 'cwebp', OptimizationRequest::OUTPUT_WEBP, OptimizationRequest::MODE_LOSSY, true );
+	$convert( $png, 'avifenc', OptimizationRequest::OUTPUT_AVIF, OptimizationRequest::MODE_LOSSY, true );
+	$convert( $png, 'cwebp', OptimizationRequest::OUTPUT_WEBP, OptimizationRequest::MODE_LOSSLESS, true );
+	$convert( $png, 'avifenc', OptimizationRequest::OUTPUT_AVIF, OptimizationRequest::MODE_LOSSLESS, true );
+
 	$corrupt_jpeg = $root . DIRECTORY_SEPARATOR . 'corrupt.jpg';
 	file_put_contents( $corrupt_jpeg, "\xff\xd8broken\xff\xd9" );
 	$corrupt_hash = hash_file( 'sha256', $corrupt_jpeg );
@@ -149,6 +197,12 @@ try {
 	$invalid_result = $invalid_manager->optimize( new OptimizationRequest( $png, $invalid_destination, 'invalid-output-test', OptimizationRequest::MODE_LOSSLESS ) );
 	$assert( 'failed' === $invalid_result->status && 'invalid_image' === $invalid_result->error_category, 'corrupt encoder output is rejected before promotion' );
 	$assert( ! file_exists( $invalid_destination ) && $png_hash === hash_file( 'sha256', $png ), 'output validation failure retains source and leaves destination absent' );
+	$invalid_webp_registry = new EncoderRegistry( array( new InvalidWebpOutputEncoder() ) );
+	$invalid_webp_manager = new OptimizationManager( new PathGuard( array( $root ) ), $validator, $invalid_webp_registry, new TemporaryFileManager(), new SafeFileReplacer() );
+	$invalid_webp_destination = $root . DIRECTORY_SEPARATOR . 'invalid-output.webp';
+	$invalid_webp_result = $invalid_webp_manager->optimize( new OptimizationRequest( $png, $invalid_webp_destination, 'cwebp', OptimizationRequest::MODE_LOSSY, 80, 65, false, 52428800, 40000000, 120000, OptimizationRequest::OUTPUT_WEBP ) );
+	$assert( 'failed' === $invalid_webp_result->status && 'invalid_image' === $invalid_webp_result->error_category, 'truncated WebP encoder output is rejected' );
+	$assert( ! file_exists( $invalid_webp_destination ) && $png_hash === hash_file( 'sha256', $png ), 'invalid WebP output leaves source intact and destination absent' );
 	$djpeg_path = $binaries->locate( 'djpeg' );
 	$assert( null !== $djpeg_path, 'MozJPEG djpeg executable is installed' );
 	$failing_registry = new EncoderRegistry( array( new MozJpegEncoder( new BinaryLocator( array( 'djpeg' => $djpeg_path, 'cjpeg' => PHP_BINARY ) ), $runner ) ) );

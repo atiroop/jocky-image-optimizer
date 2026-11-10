@@ -17,6 +17,7 @@ final class OptimizationResult {
 	public const UNSUPPORTED = 'unsupported';
 	public const UNAVAILABLE = 'unavailable';
 	public const FAILED      = 'failed';
+	public const NO_SAVINGS  = 'no_savings';
 
 	/** Creates an immutable operation result.
 	 *
