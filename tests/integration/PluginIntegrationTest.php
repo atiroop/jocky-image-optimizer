@@ -450,7 +450,6 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 		$this->set_output_format( 'webp' );
 		[ $attachment_id, $source, $metadata ] = $this->create_png_attachment( 'recovery-safe', true );
 		$source_hash                           = hash_file( 'sha256', $source );
-		$source_bytes                          = file_get_contents( $source );
 		$thumbnail                             = dirname( $source ) . '/recovery-safe-thumbnail.png';
 		$thumbnail_hash                        = hash_file( 'sha256', $thumbnail );
 		$this->assertSame( 2, $this->jobs->enqueue_many( ( new AttachmentJobFactory() )->jobs_for_attachment( $attachment_id ) ) );
@@ -488,16 +487,6 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 		$this->assertFileExists( $source );
 		$this->assertSame( $source_hash, hash_file( 'sha256', $source ) );
 		file_put_contents( $derivative, $valid_bytes );
-		file_put_contents( $source, 'corrupted source data' );
-		$this->assertSame( 'source_changed', $service->verify_attachment( $attachment_id )['status'] );
-		$this->assertSame( 'conflict', $service->cleanup_attachment( $attachment_id, true )['status'] );
-		$this->assertFileExists( $derivative, 'source corruption must block cleanup without deleting the derivative' );
-		file_put_contents( $source, $source_bytes );
-		unlink( $source );
-		$this->assertSame( 'source_missing', $service->verify_attachment( $attachment_id )['status'] );
-		$this->assertSame( 'conflict', $service->cleanup_attachment( $attachment_id, true )['status'] );
-		$this->assertFileExists( $derivative, 'missing source must block cleanup' );
-		file_put_contents( $source, $source_bytes );
 
 		$wpdb->query( $wpdb->prepare( "UPDATE {$registry} SET lifecycle_status = 'active', validation_status = 'valid' WHERE attachment_id = %d", $attachment_id ) );
 		$wpdb->query( $wpdb->prepare( "UPDATE " . QueueSchema::jobs_table() . " SET status = 'pending' WHERE attachment_id = %d LIMIT 1", $attachment_id ) );
@@ -531,6 +520,30 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 		$this->assertNotEmpty( ( new RecoveryService() )->repository()->events( 1, 25 ) );
 		$this->assertFileDoesNotExist( $derivative );
 		$this->assertSame( '', $wpdb->last_error );
+	}
+
+	public function test_recovery_rejects_corrupt_or_missing_source_without_deleting_its_derivative(): void {
+		$this->set_output_format( 'webp' );
+		[ $attachment_id, $source ] = $this->create_png_attachment( 'source-integrity', false );
+		$source_bytes                = file_get_contents( $source );
+		$this->assertSame( 1, $this->jobs->enqueue_many( ( new AttachmentJobFactory() )->jobs_for_attachment( $attachment_id ) ) );
+		$this->assertSame( 1, ( new QueueWorker( $this->jobs ) )->run_batch( 1 )['completed'] );
+		$derivative = preg_replace( '/\.png$/', '.jio.webp', $source );
+		$this->assertFileExists( $derivative );
+		$service = new RecoveryService();
+
+		file_put_contents( $source, 'corrupted source data' );
+		$this->assertSame( 'source_changed', $service->verify_attachment( $attachment_id )['status'] );
+		$this->assertSame( 'conflict', $service->cleanup_attachment( $attachment_id, true )['status'] );
+		$this->assertFileExists( $derivative, 'source corruption must block cleanup without deleting its derivative' );
+		file_put_contents( $source, $source_bytes );
+
+		unlink( $source );
+		$this->assertSame( 'source_missing', $service->verify_attachment( $attachment_id )['status'] );
+		$this->assertSame( 'conflict', $service->cleanup_attachment( $attachment_id, true )['status'] );
+		$this->assertFileExists( $derivative, 'missing source must block cleanup' );
+		file_put_contents( $source, $source_bytes );
+		$this->assertNotFalse( $source_bytes );
 	}
 
 	public function test_persistent_bulk_cleanup_batch_processes_bounded_pages_and_preserves_source(): void {
