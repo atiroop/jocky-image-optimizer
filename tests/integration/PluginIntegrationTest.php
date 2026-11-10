@@ -12,6 +12,9 @@ use Jocky\ImageOptimizer\Queue\JobRepository;
 use Jocky\ImageOptimizer\Queue\QueueSchema;
 use Jocky\ImageOptimizer\Queue\QueueState;
 use Jocky\ImageOptimizer\Queue\QueueWorker;
+use Jocky\ImageOptimizer\Recovery\AttachmentOperationLock;
+use Jocky\ImageOptimizer\Recovery\RecoveryService;
+use Jocky\ImageOptimizer\Recovery\RecoveryWorker;
 use Jocky\ImageOptimizer\Plugin;
 use Jocky\ImageOptimizer\Settings;
 
@@ -50,9 +53,13 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 		$this->jobs = new JobRepository();
 		global $wpdb;
 		$wpdb->query( 'DELETE FROM ' . QueueSchema::jobs_table() );
+		$wpdb->query( 'DELETE FROM ' . QueueSchema::derivatives_table() );
+		$wpdb->query( 'DELETE FROM ' . QueueSchema::events_table() );
+		$wpdb->query( 'DELETE FROM ' . QueueSchema::cleanup_table() );
 		$wpdb->query( 'UPDATE ' . QueueSchema::slots_table() . ' SET lock_token = NULL, locked_at = NULL' );
 		wp_clear_scheduled_hook( QueueWorker::CRON_HOOK );
 		wp_clear_scheduled_hook( BulkScanner::CRON_HOOK );
+		wp_clear_scheduled_hook( RecoveryWorker::CRON_HOOK );
 		delete_option( BulkScanner::STATE );
 		QueueState::resume();
 		$this->test_media_directories = array();
@@ -75,9 +82,13 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 		}
 		global $wpdb;
 		$wpdb->query( 'DELETE FROM ' . QueueSchema::jobs_table() );
+		$wpdb->query( 'DELETE FROM ' . QueueSchema::derivatives_table() );
+		$wpdb->query( 'DELETE FROM ' . QueueSchema::events_table() );
+		$wpdb->query( 'DELETE FROM ' . QueueSchema::cleanup_table() );
 		$wpdb->query( 'UPDATE ' . QueueSchema::slots_table() . ' SET lock_token = NULL, locked_at = NULL' );
 		wp_clear_scheduled_hook( QueueWorker::CRON_HOOK );
 		wp_clear_scheduled_hook( BulkScanner::CRON_HOOK );
+		wp_clear_scheduled_hook( RecoveryWorker::CRON_HOOK );
 		delete_option( BulkScanner::STATE );
 		QueueState::resume();
 		deactivate_plugins( self::PLUGIN );
@@ -102,9 +113,13 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 		$slots_table = QueueSchema::slots_table();
 		$this->assertSame( $jobs_table, $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $jobs_table ) ) );
 		$this->assertSame( $slots_table, $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $slots_table ) ) );
+		$this->assertSame( QueueSchema::derivatives_table(), $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', QueueSchema::derivatives_table() ) ) );
+		$this->assertSame( QueueSchema::events_table(), $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', QueueSchema::events_table() ) ) );
+		$this->assertSame( QueueSchema::cleanup_table(), $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', QueueSchema::cleanup_table() ) ) );
 		$this->assertSame( QueueSchema::VERSION, (int) get_option( QueueSchema::OPTION ) );
 		$this->assertSame( 'InnoDB', $wpdb->get_var( $wpdb->prepare( 'SELECT ENGINE FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s', $jobs_table ) ) );
 		$this->assertSame( 'InnoDB', $wpdb->get_var( $wpdb->prepare( 'SELECT ENGINE FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s', $slots_table ) ) );
+		$this->assertSame( 'InnoDB', $wpdb->get_var( $wpdb->prepare( 'SELECT ENGINE FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s', QueueSchema::derivatives_table() ) ) );
 
 		$wpdb->query( "DELETE FROM {$slots_table} WHERE slot_id IN (0,1,2,3,4)" );
 		QueueSchema::maybe_install();
@@ -115,8 +130,8 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 		$this->assertSame( '', $wpdb->last_error, 'queue schema and seed queries report no database error' );
 
 		$commit_count = $this->database_commit_count();
-		$repository        = new JobRepository();
-		$worker_token      = bin2hex( random_bytes( 32 ) );
+		$repository   = new JobRepository();
+		$worker_token = bin2hex( random_bytes( 32 ) );
 		$this->assertTrue( $repository->acquire_slot( $worker_token, 1 ) );
 		$this->assertTrue( $repository->renew_slot( $worker_token ), 'same-second renewal confirms existing token ownership' );
 		$this->assertSame( $commit_count, $this->database_commit_count(), 'worker leases do not commit WordPress test transactions' );
@@ -339,13 +354,22 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 		$integration                           = new MediaIntegration( $this->jobs, new QueueWorker( $this->jobs ) );
 		$this->assertSame( 2, $integration->enqueue_attachment( $attachment_id ) );
 		$this->assertSame( 0, $integration->enqueue_attachment( $attachment_id ), 'duplicate requests reuse the fingerprinted queue jobs' );
-		$worker       = new QueueWorker( $this->jobs );
-		$first_batch  = $worker->run_batch( 1 );
+		$worker      = new QueueWorker( $this->jobs );
+		$first_batch = $worker->run_batch( 1 );
 		$this->assertSame( 1, $first_batch['completed'], 'one-item worker batch makes bounded progress' );
 		$this->assertSame( 1, $this->jobs->pending_count(), 'one thumbnail job remains for the next worker batch' );
 		$this->assertSame( 1, $this->jobs->stats()['completed'] );
 		$second_batch = $worker->run_batch( 1 );
-		$this->assertSame( 1, $second_batch['completed'], wp_json_encode( array( 'counts' => $second_batch, 'jobs' => $this->jobs->recent() ) ) );
+		$this->assertSame(
+			1,
+			$second_batch['completed'],
+			wp_json_encode(
+				array(
+					'counts' => $second_batch,
+					'jobs'   => $this->jobs->recent(),
+				)
+			)
+		);
 		$this->assertSame( 0, $this->jobs->pending_count() );
 		$this->assertSame( $source_hash, hash_file( 'sha256', $source ) );
 		$this->assertSame( $attached, get_post_meta( $attachment_id, '_wp_attached_file', true ) );
@@ -387,6 +411,97 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 		$this->assertSame( 0, $this->jobs->pending_count(), 'bounded worker batch leaves no second job for this JPEG' );
 	}
 
+	public function test_recovery_verifies_corruption_and_cleans_only_registered_derivatives(): void {
+		$this->set_output_format( 'webp' );
+		[ $attachment_id, $source, $metadata ] = $this->create_png_attachment( 'recovery-safe', true );
+		$source_hash                           = hash_file( 'sha256', $source );
+		$thumbnail                             = dirname( $source ) . '/recovery-safe-thumbnail.png';
+		$thumbnail_hash                        = hash_file( 'sha256', $thumbnail );
+		$this->assertSame( 2, $this->jobs->enqueue_many( ( new AttachmentJobFactory() )->jobs_for_attachment( $attachment_id ) ) );
+		$counts = ( new QueueWorker( $this->jobs ) )->run_batch( 2 );
+		$this->assertSame( 2, $counts['completed'] );
+
+		$service  = new RecoveryService();
+		$verified = $service->verify_attachment( $attachment_id );
+		$this->assertSame( 'valid', $verified['status'] );
+		$this->assertCount( 2, $verified['records'] );
+		global $wpdb;
+		$registry = QueueSchema::derivatives_table();
+		$owned    = (array) $wpdb->get_results( $wpdb->prepare( "SELECT * FROM {$registry} WHERE attachment_id = %d", $attachment_id ), ARRAY_A );
+		$this->assertCount( 2, $owned );
+		foreach ( $owned as $record ) {
+			$this->assertMatchesRegularExpression( '/^[a-f0-9]{64}$/', $record['source_sha256'] );
+			$this->assertMatchesRegularExpression( '/^[a-f0-9]{64}$/', $record['derivative_sha256'] );
+			$this->assertStringNotContainsString( ABSPATH, $record['source_relative_path'] );
+			$this->assertStringNotContainsString( ABSPATH, $record['derivative_relative_path'] );
+		}
+
+		$plan = $service->preview_attachment( $attachment_id );
+		$this->assertSame( 'ready', $plan['status'] );
+		$this->assertCount( 2, $plan['eligible'] );
+		$this->assertSame( 'confirmation_required', $service->cleanup_attachment( $attachment_id, false )['status'] );
+		$this->assertFileExists( preg_replace( '/\.png$/', '.jio.webp', $source ) );
+
+		$derivative  = preg_replace( '/\.png$/', '.jio.webp', $source );
+		$valid_bytes = file_get_contents( $derivative );
+		file_put_contents( $derivative, 'corrupt derivative data' );
+		$corrupt = $service->verify_attachment( $attachment_id );
+		$this->assertSame( 'derivative_corrupted', $corrupt['status'] );
+		$this->assertCount( 1, $service->preview_attachment( $attachment_id )['conflicts'] );
+		$this->assertFileExists( $source );
+		$this->assertSame( $source_hash, hash_file( 'sha256', $source ) );
+		file_put_contents( $derivative, $valid_bytes );
+
+		$lock = new AttachmentOperationLock();
+		$this->assertTrue( $lock->acquire( $attachment_id ) );
+		$this->assertSame( 'operation_locked', $service->cleanup_attachment( $attachment_id, true )['status'] );
+		$lock->release( $attachment_id );
+
+		$result = $service->cleanup_attachment( $attachment_id, true );
+		$this->assertSame( 'complete', $result['status'] );
+		$this->assertSame( 2, $result['cleaned'] );
+		$this->assertFileExists( $source );
+		$this->assertFileExists( $thumbnail );
+		$this->assertSame( $source_hash, hash_file( 'sha256', $source ) );
+		$this->assertSame( $thumbnail_hash, hash_file( 'sha256', $thumbnail ) );
+		$this->assertSame( $metadata, wp_get_attachment_metadata( $attachment_id ) );
+		$this->assertSame( 2, (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$registry} WHERE attachment_id = %d AND lifecycle_status = 'cleaned'", $attachment_id ) ) );
+		$this->assertGreaterThanOrEqual( 4, (int) $wpdb->get_var( $wpdb->prepare( 'SELECT COUNT(*) FROM ' . QueueSchema::events_table() . ' WHERE attachment_id = %d', $attachment_id ) ) );
+		$this->assertNotEmpty( ( new RecoveryService() )->repository()->events( 1, 25 ) );
+		$this->assertFileDoesNotExist( $derivative );
+		$this->assertSame( '', $wpdb->last_error );
+	}
+
+	public function test_persistent_bulk_cleanup_batch_processes_bounded_pages_and_preserves_source(): void {
+		global $wpdb;
+		$this->set_output_format( 'webp' );
+		[ $attachment_id, $source, $metadata ] = $this->create_png_attachment( 'bulk-recovery', true );
+		$source_hash                           = hash_file( 'sha256', $source );
+		$this->assertSame( 2, $this->jobs->enqueue_many( ( new AttachmentJobFactory() )->jobs_for_attachment( $attachment_id ) ) );
+		$this->assertSame( 2, ( new QueueWorker( $this->jobs ) )->run_batch( 2 )['completed'] );
+
+		$service  = new RecoveryService();
+		$repo     = $service->repository();
+		$batch_id = $repo->create_cleanup_batch( $repo->active_summary()['records'], get_current_user_id() );
+		$this->assertGreaterThan( 0, $batch_id );
+		$first = $service->cleanup_batch( $batch_id, 1 );
+		$this->assertSame( 1, $first['processed'] );
+		$this->assertSame( 'running', $first['status'] );
+		$second = $service->cleanup_batch( $batch_id, 1 );
+		$this->assertSame( 1, $second['processed'] );
+		$this->assertSame( 'running', $second['status'] );
+		$final = $service->cleanup_batch( $batch_id, 1 );
+		$this->assertSame( 'complete', $final['status'] );
+
+		$batch = $repo->cleanup_batch( $batch_id );
+		$this->assertSame( 'complete', $batch['status'] );
+		$this->assertSame( 2, (int) $batch['cleaned_count'] );
+		$this->assertSame( $metadata, wp_get_attachment_metadata( $attachment_id ) );
+		$this->assertSame( $source_hash, hash_file( 'sha256', $source ) );
+		$this->assertSame( array(), glob( dirname( $source ) . DIRECTORY_SEPARATOR . '*.jio.webp' ) ?: array() );
+		$this->assertSame( '', $wpdb->last_error );
+	}
+
 	public function test_automatic_queueing_is_off_by_default_and_deduplicates_after_metadata_generation(): void {
 		[ $attachment_id, , $metadata ] = $this->create_png_attachment( 'automatic', true );
 		$this->assertSame( $metadata, apply_filters( 'wp_generate_attachment_metadata', $metadata, $attachment_id, 'create' ) );
@@ -396,7 +511,17 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 		$this->assertNotFalse( has_filter( 'wp_generate_attachment_metadata' ), 'plugin boot registers automatic upload queueing' );
 		$this->assertTrue( Settings::sanitize( get_option( Plugin::OPTION_NAME ) )['auto_optimize'] );
 		$this->assertSame( $metadata, apply_filters( 'wp_generate_attachment_metadata', $metadata, $attachment_id, 'create' ) );
-		$this->assertSame( 2, $this->jobs->pending_count(), wp_json_encode( array( 'filter_registered' => has_filter( 'wp_generate_attachment_metadata' ), 'settings' => Settings::sanitize( get_option( Plugin::OPTION_NAME ) ), 'jobs' => $this->jobs->recent() ) ) );
+		$this->assertSame(
+			2,
+			$this->jobs->pending_count(),
+			wp_json_encode(
+				array(
+					'filter_registered' => has_filter( 'wp_generate_attachment_metadata' ),
+					'settings'          => Settings::sanitize( get_option( Plugin::OPTION_NAME ) ),
+					'jobs'              => $this->jobs->recent(),
+				)
+			)
+		);
 		apply_filters( 'wp_generate_attachment_metadata', $metadata, $attachment_id, 'update' );
 		$this->assertSame( 2, $this->jobs->pending_count() );
 	}
@@ -566,14 +691,14 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 			( new AttachmentTargetProvider() )->targets( $attachment_id ),
 			wp_json_encode(
 				array(
-					'post_type'      => get_post_type( $attachment_id ),
-					'post_mime_type' => get_post_mime_type( $attachment_id ),
-					'uploads_root'   => wp_upload_dir()['basedir'],
-					'attached_file'  => get_attached_file( $attachment_id ),
+					'post_type'       => get_post_type( $attachment_id ),
+					'post_mime_type'  => get_post_mime_type( $attachment_id ),
+					'uploads_root'    => wp_upload_dir()['basedir'],
+					'attached_file'   => get_attached_file( $attachment_id ),
 					'unfiltered_file' => get_attached_file( $attachment_id, true ),
-					'file_mime'      => wp_get_image_mime( $source ),
-					'file_exists'    => is_file( $source ),
-					'file_readable'  => is_readable( $source ),
+					'file_mime'       => wp_get_image_mime( $source ),
+					'file_exists'     => is_file( $source ),
+					'file_readable'   => is_readable( $source ),
 				)
 			)
 		);
@@ -634,7 +759,7 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 	 * @return string PNG fixture bytes.
 	 */
 	private static function png_fixture_data(): string {
-		$chunk = static function ( string $type, string $data ): string {
+		$chunk  = static function ( string $type, string $data ): string {
 			return pack( 'N', strlen( $data ) ) . $type . $data . pack( 'H*', hash( 'crc32b', $type . $data ) );
 		};
 		$header = pack( 'NNCCCCC', 1, 1, 8, 6, 0, 0, 0 );

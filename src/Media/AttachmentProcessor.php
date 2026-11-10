@@ -23,6 +23,9 @@ use Jocky\ImageOptimizer\Optimization\PathGuard;
 use Jocky\ImageOptimizer\Optimization\PngquantEncoder;
 use Jocky\ImageOptimizer\Optimization\SafeFileReplacer;
 use Jocky\ImageOptimizer\Optimization\TemporaryFileManager;
+use Jocky\ImageOptimizer\Recovery\AttachmentOperationLock;
+use Jocky\ImageOptimizer\Recovery\DerivativeRepository;
+use Jocky\ImageOptimizer\Recovery\IntegrityHasher;
 use Jocky\ImageOptimizer\Plugin;
 use Jocky\ImageOptimizer\Queue\JobRepository;
 use Jocky\ImageOptimizer\Settings;
@@ -49,6 +52,29 @@ final class AttachmentProcessor {
 	 * @return array{status:string,input_bytes:int,output_bytes:int|null,error_code:string|null} Bounded outcome.
 	 */
 	public function process( array $job ): array {
+		$attachment_id = (int) ( $job['attachment_id'] ?? 0 );
+		$lock          = new AttachmentOperationLock();
+		if ( ! $lock->acquire( $attachment_id ) ) {
+			return array(
+				'status'       => 'failed',
+				'input_bytes'  => 0,
+				'output_bytes' => null,
+				'error_code'   => 'attachment_operation_locked',
+			);
+		}
+		try {
+			return $this->process_locked( $job );
+		} finally {
+			$lock->release( $attachment_id );
+		}
+	}
+
+	/** Executes processing while holding the per-attachment optimizer/recovery lock.
+	 *
+	 * @param array<string, mixed> $job Claimed database queue row.
+	 * @return array{status:string,input_bytes:int,output_bytes:int|null,error_code:string|null} Bounded outcome.
+	 */
+	private function process_locked( array $job ): array {
 		$attachment_id = (int) $job['attachment_id'];
 		$target        = $this->targets->target( $attachment_id, (string) $job['variant_key'] );
 		if ( null === $target || ! hash_equals( (string) $job['source_fingerprint'], $target['fingerprint'] ) ) {
@@ -98,15 +124,43 @@ final class AttachmentProcessor {
 				'error_code'   => 'path_outside_uploads',
 			);
 		}
-		$meta_key   = '_jio_derivative_' . substr( hash( 'sha256', $target['relative_path'] . '|' . $format . '|' . $target['fingerprint'] ), 0, 32 );
-		$old_record = get_post_meta( $attachment_id, $meta_key, true );
-		if ( is_array( $old_record ) && hash_equals( $target['fingerprint'], (string) ( $old_record['source_fingerprint'] ?? '' ) ) && hash_equals( $relative_destination, (string) ( $old_record['derivative_relative_path'] ?? '' ) ) && is_file( $destination ) ) {
+		$meta_key    = '_jio_derivative_' . substr( hash( 'sha256', $target['relative_path'] . '|' . $format . '|' . $target['fingerprint'] ), 0, 32 );
+		$old_record  = get_post_meta( $attachment_id, $meta_key, true );
+		$hasher      = new IntegrityHasher();
+		$source_hash = $hasher->hash_file( $target['source_path'] );
+		if ( null === $source_hash ) {
 			return array(
-				'status'       => 'completed',
+				'status'       => 'failed',
 				'input_bytes'  => $target['bytes'],
-				'output_bytes' => (int) filesize( $destination ),
-				'error_code'   => null,
+				'output_bytes' => null,
+				'error_code'   => 'source_integrity_unavailable',
 			);
+		}
+		if ( is_array( $old_record ) && hash_equals( $target['fingerprint'], (string) ( $old_record['source_fingerprint'] ?? '' ) ) && hash_equals( $relative_destination, (string) ( $old_record['derivative_relative_path'] ?? '' ) ) && is_file( $destination ) && ! is_link( $destination ) ) {
+			$existing_hash   = $hasher->hash_file( $destination );
+			$old_output_hash = (string) ( $old_record['derivative_sha256'] ?? '' );
+			$old_source_hash = (string) ( $old_record['source_sha256'] ?? '' );
+			if ( null !== $existing_hash && ( '' === $old_output_hash || hash_equals( $old_output_hash, $existing_hash['sha256'] ) ) && ( '' === $old_source_hash || hash_equals( $old_source_hash, $source_hash['sha256'] ) ) && wp_get_image_mime( $destination ) === $target_mime ) {
+				$ownership_id                    = $this->persist_ownership( $attachment_id, $target, $relative_destination, $format, $target_mime, $source_hash, $existing_hash, (string) ( $old_record['encoder_id'] ?? 'legacy' ), array() );
+				$old_record['source_sha256']     = $source_hash['sha256'];
+				$old_record['derivative_sha256'] = $existing_hash['sha256'];
+				$old_record['encoder_id']        = (string) ( $old_record['encoder_id'] ?? 'legacy' );
+				if ( false === $ownership_id ) {
+					return array(
+						'status'       => 'failed',
+						'input_bytes'  => $target['bytes'],
+						'output_bytes' => $existing_hash['bytes'],
+						'error_code'   => 'derivative_registry_failed',
+					);
+				}
+				update_post_meta( $attachment_id, $meta_key, $old_record );
+				return array(
+					'status'       => 'completed',
+					'input_bytes'  => $target['bytes'],
+					'output_bytes' => $existing_hash['bytes'],
+					'error_code'   => null,
+				);
+			}
 		}
 		$settings   = Settings::sanitize( get_option( Plugin::OPTION_NAME, array() ) );
 		$binary     = new BinaryLocator();
@@ -160,7 +214,17 @@ final class AttachmentProcessor {
 				'error_code'   => $result->error_category ?? 'optimization_' . $result->status,
 			);
 		}
-		$record = array(
+		$source_after = $hasher->hash_file( $target['source_path'] );
+		$output_hash  = $hasher->hash_file( $destination );
+		if ( null === $source_after || ! hash_equals( $source_hash['sha256'], $source_after['sha256'] ) || null === $output_hash ) {
+			return array(
+				'status'       => 'failed',
+				'input_bytes'  => $result->input_bytes,
+				'output_bytes' => $result->output_bytes,
+				'error_code'   => 'integrity_verification_failed',
+			);
+		}
+		$record       = array(
 			'source_relative_path'     => $target['relative_path'],
 			'source_fingerprint'       => $target['fingerprint'],
 			'derivative_relative_path' => $relative_destination,
@@ -169,8 +233,34 @@ final class AttachmentProcessor {
 			'input_bytes'              => $result->input_bytes,
 			'output_bytes'             => $result->output_bytes,
 			'bytes_saved'              => $result->bytes_saved,
+			'source_sha256'            => $source_hash['sha256'],
+			'derivative_sha256'        => $output_hash['sha256'],
+			'encoder_id'               => $result->encoder_id ?? $encoder_id,
 			'generated_gmt'            => gmdate( 'c' ),
 		);
+		$ownership_id = $this->persist_ownership(
+			$attachment_id,
+			$target,
+			$relative_destination,
+			$format,
+			$target_mime,
+			$source_hash,
+			$output_hash,
+			$result->encoder_id ?? $encoder_id,
+			array(
+				'quality'         => $settings['image_quality'],
+				'minimum_quality' => $settings['minimum_quality'],
+				'mode'            => OptimizationRequest::MODE_LOSSY,
+			)
+		);
+		if ( false === $ownership_id ) {
+			return array(
+				'status'       => 'failed',
+				'input_bytes'  => $result->input_bytes,
+				'output_bytes' => $result->output_bytes,
+				'error_code'   => 'derivative_registry_failed',
+			);
+		}
 		update_post_meta( $attachment_id, $meta_key, $record );
 		if ( ! hash_equals( wp_json_encode( $record ), wp_json_encode( get_post_meta( $attachment_id, $meta_key, true ) ) ) ) {
 			return array(
@@ -185,6 +275,52 @@ final class AttachmentProcessor {
 			'input_bytes'  => $result->input_bytes,
 			'output_bytes' => $result->output_bytes,
 			'error_code'   => null,
+		);
+	}
+
+	/** Persists portable, digest-backed ownership metadata for one validated derivative.
+	 *
+	 * @param int                            $attachment_id Attachment ID.
+	 * @param array<string, mixed>           $target Resolved attachment source.
+	 * @param string                         $derivative_relative_path Portable uploads-relative derivative path.
+	 * @param string                         $format Output format.
+	 * @param string                         $mime Output MIME type.
+	 * @param array{sha256:string,bytes:int} $source_hash Source digest.
+	 * @param array{sha256:string,bytes:int} $derivative_hash Derivative digest.
+	 * @param string                         $encoder_id Trusted encoder identifier.
+	 * @param array<string, scalar>          $parameters Bounded encoder parameters.
+	 * @return int|false Registry row identifier or false on failure.
+	 */
+	private function persist_ownership( int $attachment_id, array $target, string $derivative_relative_path, string $format, string $mime, array $source_hash, array $derivative_hash, string $encoder_id, array $parameters ): int|false {
+		$metadata      = wp_get_attachment_metadata( $attachment_id );
+		$attached      = get_post_meta( $attachment_id, '_wp_attached_file', true );
+		$metadata_hash = hash(
+			'sha256',
+			(string) wp_json_encode(
+				array(
+					'attached_file' => $attached,
+					'metadata'      => is_array( $metadata ) ? $metadata : array(),
+				)
+			)
+		);
+		return ( new DerivativeRepository() )->record(
+			array(
+				'attachment_id'            => $attachment_id,
+				'variant_key'              => $target['variant_key'],
+				'source_relative_path'     => $target['relative_path'],
+				'source_mime'              => $target['mime'],
+				'source_bytes'             => $source_hash['bytes'],
+				'source_sha256'            => $source_hash['sha256'],
+				'source_fingerprint'       => $target['fingerprint'],
+				'metadata_hash'            => $metadata_hash,
+				'derivative_relative_path' => $derivative_relative_path,
+				'output_format'            => $format,
+				'derivative_sha256'        => $derivative_hash['sha256'],
+				'input_bytes'              => $source_hash['bytes'],
+				'output_bytes'             => $derivative_hash['bytes'],
+				'encoder_id'               => $encoder_id,
+				'encoder_parameters'       => (string) wp_json_encode( $parameters ),
+			)
 		);
 	}
 

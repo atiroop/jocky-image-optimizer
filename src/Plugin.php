@@ -15,6 +15,8 @@ use Jocky\ImageOptimizer\Queue\BulkScanner;
 use Jocky\ImageOptimizer\Queue\JobRepository;
 use Jocky\ImageOptimizer\Queue\QueueSchema;
 use Jocky\ImageOptimizer\Queue\QueueWorker;
+use Jocky\ImageOptimizer\Recovery\RecoveryService;
+use Jocky\ImageOptimizer\Recovery\RecoveryWorker;
 
 /** Coordinates the plugin's lifecycle and admin services. */
 final class Plugin {
@@ -24,17 +26,21 @@ final class Plugin {
 	/** Boots admin integrations when WordPress is in the dashboard. */
 	public function boot(): void {
 		QueueSchema::maybe_install();
-		$jobs   = new JobRepository();
-		$worker = new QueueWorker( $jobs );
-		$bulk   = new BulkScanner( $jobs, $worker );
+		$jobs            = new JobRepository();
+		$worker          = new QueueWorker( $jobs );
+		$bulk            = new BulkScanner( $jobs, $worker );
+		$recovery        = new RecoveryService();
+		$recovery_worker = new RecoveryWorker( $recovery );
 		$worker->register();
 		$bulk->register();
+		$recovery_worker->register();
 		( new MediaIntegration( $jobs, $worker ) )->register();
 		if ( is_admin() ) {
-			( new AdminPages( new CapabilityDetector(), $jobs, $bulk, $worker ) )->register();
+			( new AdminPages( new CapabilityDetector(), $jobs, $bulk, $worker, $recovery, $recovery_worker ) )->register();
 		}
 		if ( defined( 'WP_CLI' ) && WP_CLI ) {
 			\WP_CLI::add_command( 'jio worker', new \Jocky\ImageOptimizer\Cli\WorkerCommand( $worker, $jobs ) );
+			\WP_CLI::add_command( 'jio recovery', new \Jocky\ImageOptimizer\Cli\RecoveryCommand( $recovery, $recovery_worker ) );
 		}
 	}
 

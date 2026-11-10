@@ -67,6 +67,14 @@ final class MediaIntegration {
 			admin_url( 'admin-post.php' )
 		);
 		$actions['jio_optimize'] = sprintf( '<a href="%1$s">%2$s</a>', esc_url( wp_nonce_url( $url, 'jio_optimize_attachment_' . $post->ID ) ), esc_html__( 'Queue optimization', 'jocky-image-optimizer' ) );
+		$recovery_url            = add_query_arg(
+			array(
+				'page'          => 'jio-recovery',
+				'attachment_id' => (int) $post->ID,
+			),
+			admin_url( 'admin.php' )
+		);
+		$actions['jio_recovery'] = sprintf( '<a href="%1$s">%2$s</a>', esc_url( $recovery_url ), esc_html__( 'JIO recovery preview', 'jocky-image-optimizer' ) );
 		return $actions;
 	}
 

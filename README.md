@@ -4,6 +4,12 @@ Jocky Image Optimizer is a self-hosted WordPress plugin for local image optimiza
 
 The beta ZIP is built and tested by GitHub Actions on PHP 8.3 with WordPress 6.6.11 and 7.1.4. See [VALIDATION.md](VALIDATION.md) for the current workflow result, artifact download location, ZIP validation, and beta limitations.
 
+## Recovery and derivative lifecycle
+
+The Milestone 5 recovery implementation records source and derivative SHA-256 digests, portable uploads-relative paths, attachment metadata references, encoder details, and lifecycle/audit state in plugin-owned database tables. From **Image Optimizer → Recovery**, administrators can inspect an attachment, preview registered cleanup candidates, scan legacy JIO metadata in bounded pages, and explicitly start a bounded background cleanup batch. The **History** page shows job results and the latest registered derivative state. WP-CLI provides `wp jio recovery status|verify|preview|cleanup|scan|bulk`; destructive cleanup requires `--confirm`, and large attachment inventories use `--after-id` cursors.
+
+Original files, WordPress thumbnails, and core attachment metadata are retained. The integrity manifest is not an independent copy of original bytes: if an original is missing or corrupt, restore it from UpdraftPlus or another verified site backup. Derivatives are not used to reconstruct originals. Bulk previews list database-registered candidates; every source and derivative is checked again before deletion. Files above the bounded hashing limit, files whose identity or ownership is ambiguous, and queue conflicts fail closed for manual inspection. See [VALIDATION.md](VALIDATION.md) for which Milestone 5 checks have actually run; this implementation is not yet CI-verified.
+
 ## Requirements
 
 - WordPress 6.6 or later
