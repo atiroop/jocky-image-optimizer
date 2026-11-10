@@ -459,9 +459,13 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 		$this->assertSame( 'operation_locked', $service->cleanup_attachment( $attachment_id, true )['status'] );
 		$lock->release( $attachment_id );
 
-		$result = $service->cleanup_attachment( $attachment_id, true );
-		$this->assertSame( 'complete', $result['status'] );
-		$this->assertSame( 2, $result['cleaned'] );
+		$first_cleanup = $service->cleanup_attachment( $attachment_id, true );
+		$this->assertSame( 'partial', $first_cleanup['status'] );
+		$this->assertSame( 1, $first_cleanup['cleaned'] );
+		$this->assertTrue( $first_cleanup['has_more'] );
+		$second_cleanup = $service->cleanup_attachment( $attachment_id, true, (int) $first_cleanup['next_after_id'] );
+		$this->assertSame( 'complete', $second_cleanup['status'] );
+		$this->assertSame( 1, $second_cleanup['cleaned'] );
 		$this->assertFileExists( $source );
 		$this->assertFileExists( $thumbnail );
 		$this->assertSame( $source_hash, hash_file( 'sha256', $source ) );
