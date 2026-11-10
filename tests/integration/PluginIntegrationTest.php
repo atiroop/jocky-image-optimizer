@@ -146,10 +146,38 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 	}
 
 	public function test_schema_version_mismatch_reapplies_idempotent_migration(): void {
+		global $wpdb;
+		[ $attachment_id ] = $this->create_png_attachment( 'migration-preserves-data', false );
+		$this->set_output_format( 'webp' );
+		$this->jobs->enqueue_many( ( new AttachmentJobFactory() )->jobs_for_attachment( $attachment_id ) );
+		$job_count = $this->jobs->pending_count();
+		update_post_meta(
+			$attachment_id,
+			'_jio_derivative_legacy',
+			array(
+				'derivative_relative_path' => '2026/11/source.jio.webp',
+				'output_format'            => 'webp',
+			)
+		);
 		update_option( QueueSchema::OPTION, QueueSchema::VERSION - 1 );
 		QueueSchema::maybe_install();
 		$this->assertSame( QueueSchema::VERSION, (int) get_option( QueueSchema::OPTION ) );
-		$this->assertSame( '', $GLOBALS['wpdb']->last_error );
+		$this->assertSame( $job_count, $this->jobs->pending_count(), 'migration preserves pre-existing queue records' );
+		$this->assertSame( '2026/11/source.jio.webp', get_post_meta( $attachment_id, '_jio_derivative_legacy', true )['derivative_relative_path'], 'migration preserves legacy derivative ownership metadata for safe indexing' );
+		$this->assertSame( '', $wpdb->last_error );
+	}
+
+	public function test_bulk_scanner_normalizes_legacy_partial_progress_state(): void {
+		$scanner = new BulkScanner( $this->jobs, new QueueWorker( $this->jobs ) );
+		update_option( BulkScanner::STATE, array( 'status' => 'scanning', 'last_id' => '12' ) );
+		$state = $scanner->state();
+		$this->assertSame( 'scanning', $state['status'] );
+		$this->assertSame( 12, $state['last_id'] );
+		$this->assertArrayHasKey( 'scanned', $state );
+		$this->assertArrayHasKey( 'jobs_added', $state );
+		$this->assertArrayHasKey( 'total_images', $state );
+		$this->assertSame( 0, $state['scanned'] );
+		$this->assertSame( 0, $state['jobs_added'] );
 	}
 
 	public static function tearDownAfterClass(): void {
@@ -220,6 +248,12 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 		$_POST['queue_action'] = 'cancel';
 		$this->expectException( WPDieException::class );
 		( new AdminPages( new CapabilityDetector(), $this->jobs, new BulkScanner( $this->jobs, new QueueWorker( $this->jobs ) ), new QueueWorker( $this->jobs ) ) )->handle_queue_action();
+	}
+
+	public function test_recovery_cleanup_handler_rejects_users_without_admin_capability(): void {
+		wp_set_current_user( self::factory()->user->create( array( 'role' => 'subscriber' ) ) );
+		$this->expectException( WPDieException::class );
+		( new AdminPages( new CapabilityDetector(), $this->jobs ) )->handle_attachment_cleanup();
 	}
 
 	public function test_admin_menu_settings_nonce_and_authorized_page_rendering(): void {
@@ -416,6 +450,7 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 		$this->set_output_format( 'webp' );
 		[ $attachment_id, $source, $metadata ] = $this->create_png_attachment( 'recovery-safe', true );
 		$source_hash                           = hash_file( 'sha256', $source );
+		$source_bytes                          = file_get_contents( $source );
 		$thumbnail                             = dirname( $source ) . '/recovery-safe-thumbnail.png';
 		$thumbnail_hash                        = hash_file( 'sha256', $thumbnail );
 		$this->assertSame( 2, $this->jobs->enqueue_many( ( new AttachmentJobFactory() )->jobs_for_attachment( $attachment_id ) ) );
@@ -453,6 +488,26 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 		$this->assertFileExists( $source );
 		$this->assertSame( $source_hash, hash_file( 'sha256', $source ) );
 		file_put_contents( $derivative, $valid_bytes );
+		file_put_contents( $source, 'corrupted source data' );
+		$this->assertSame( 'source_changed', $service->verify_attachment( $attachment_id )['status'] );
+		$this->assertSame( 'conflict', $service->cleanup_attachment( $attachment_id, true )['status'] );
+		$this->assertFileExists( $derivative, 'source corruption must block cleanup without deleting the derivative' );
+		file_put_contents( $source, $source_bytes );
+		unlink( $source );
+		$this->assertSame( 'source_missing', $service->verify_attachment( $attachment_id )['status'] );
+		$this->assertSame( 'conflict', $service->cleanup_attachment( $attachment_id, true )['status'] );
+		$this->assertFileExists( $derivative, 'missing source must block cleanup' );
+		file_put_contents( $source, $source_bytes );
+
+		$wpdb->query( $wpdb->prepare( "UPDATE {$registry} SET lifecycle_status = 'active', validation_status = 'valid' WHERE attachment_id = %d", $attachment_id ) );
+		$wpdb->query( $wpdb->prepare( "UPDATE " . QueueSchema::jobs_table() . " SET status = 'pending' WHERE attachment_id = %d LIMIT 1", $attachment_id ) );
+		$this->assertSame( 'queue_conflict', $service->preview_attachment( $attachment_id )['status'], 'pending optimization work blocks cleanup preview' );
+		$wpdb->query( $wpdb->prepare( "UPDATE " . QueueSchema::jobs_table() . " SET status = 'running' WHERE attachment_id = %d LIMIT 1", $attachment_id ) );
+		$this->assertSame( 'queue_conflict', $service->preview_attachment( $attachment_id )['status'], 'the queue uses running, not processing, for claimed work' );
+		$this->assertSame( 'queue_conflict', $service->cleanup_attachment( $attachment_id, true )['status'] );
+		$this->assertFileExists( $source );
+		$this->assertFileExists( $derivative );
+		$wpdb->query( $wpdb->prepare( "UPDATE " . QueueSchema::jobs_table() . " SET status = 'completed' WHERE attachment_id = %d", $attachment_id ) );
 
 		$lock = new AttachmentOperationLock();
 		$this->assertTrue( $lock->acquire( $attachment_id ) );

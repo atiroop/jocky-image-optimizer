@@ -87,6 +87,21 @@ jobs:
         run: |
           vendor/bin/phpunit --configuration phpunit.xml.dist --filter '/test_schema_seed_recovery|test_schema_version_mismatch|test_individual_attachment|test_automatic_queueing|test_bulk_scan|test_unsupported_and_missing/'
           composer test:integration
+      - name: Exercise recovery commands through pinned WP-CLI
+        env:
+          WP_CORE_DIR: ${{ runner.temp }}/jio-wp-tests/wordpress
+          WP_CLI_PHAR: ${{ runner.temp }}/wp-cli-2.12.0.phar
+          JIO_WPCLI_DB_NAME: wordpress_test
+          JIO_WPCLI_DB_USER: root
+          JIO_WPCLI_DB_PASSWORD: root
+          JIO_WPCLI_DB_HOST: 127.0.0.1
+        run: |
+          set -euo pipefail
+          checksum_file="$RUNNER_TEMP/wp-cli-2.12.0.phar.sha512"
+          curl --fail --silent --show-error --location --output "$WP_CLI_PHAR" "https://github.com/wp-cli/wp-cli/releases/download/v2.12.0/wp-cli-2.12.0.phar"
+          curl --fail --silent --show-error --location --output "$checksum_file" "https://github.com/wp-cli/wp-cli/releases/download/v2.12.0/wp-cli-2.12.0.phar.sha512"
+          printf '%s  %s\n' "$(cat "$checksum_file")" "$WP_CLI_PHAR" | sha512sum --check --status
+          bash bin/test-wp-cli.sh
   encoder-integration:
     runs-on: ubuntu-24.04
     needs: static-and-unit

@@ -160,7 +160,7 @@ final class DerivativeRepository {
 	public function has_active_optimization( int $attachment_id ): bool {
 		global $wpdb;
 		$table = QueueSchema::jobs_table();
-		return (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$table} WHERE attachment_id = %d AND status IN ('pending','processing')", $attachment_id ) ) > 0;
+		return (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$table} WHERE attachment_id = %d AND status IN ('pending','running')", $attachment_id ) ) > 0;
 	}
 
 	/** Adds a bounded audit event; details must not include secrets or absolute paths.

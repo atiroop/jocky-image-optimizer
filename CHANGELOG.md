@@ -8,6 +8,7 @@
 - Added integration coverage for derivative registry creation, corruption detection, queue/lock conflict handling, cleanup audit, and preservation of originals, thumbnails, and attachment metadata. All five jobs passed in [GitHub Actions run 42775341373](https://github.com/atiroop/jocky-image-optimizer/actions/runs/42775341373) on commit `5e7497af9f7be78c2f693cbb9f4cfe5a0e90e871`.
 - Recovery preview rechecks conflicted and interrupted-removal records so detected corruption remains visible and repaired files become eligible only after fresh validation. Queue savings aggregation now uses signed arithmetic when an output is larger than its input.
 - Known limits: 50 MiB per-file and 100 MiB per-operation hash bounds; trust in non-hostile local uploads-directory writers due to portable PHP unlink TOCTOU limits; MySQL advisory locks are connection scoped; original restoration requires an external backup.
+- Acceptance audit fixes pending CI: recovery preflight now recognizes the queue's actual `running` state, scanner progress normalizes legacy partial state to the complete admin.js response shape, and regression tests cover these cases plus source loss/corruption, authorization, and migration preservation. The disposable WordPress matrix now also invokes recovery status, preview, and scan through checksum-verified WP-CLI 2.12.0 against the packaged plugin.
 
 ## 0.4.0-beta — First installable beta
 
@@ -31,7 +32,7 @@
 - Added an explicit local JPEG/PNG optimization API with lossless jpegtran/oxipng and lossy MozJPEG/pngquant adapters.
 - Added path confinement, bounded inputs and dimensions, time-limited argv-based processes, temporary-file cleanup, post-encode validation, and no-clobber output promotion.
 - Rejects APNG and lossy metadata-preserving requests; no WordPress media hooks or attachment mutations were added.
-- Added PNG CRC/order/corruption tests, private temporary staging, and reproducible real-encoder integration coverage in CI. GitHub CI has not yet run for these changes.
+- Added PNG CRC/order/corruption tests, private temporary staging, and reproducible real-encoder integration coverage. The final PHP 8.3 CI matrix, both WordPress versions, and real encoders passed in [run 42729942236](https://github.com/atiroop/jocky-image-optimizer/actions/runs/42729942236).
 
 ## Milestone 2 remediation — 2026-11-10
 
@@ -66,11 +67,11 @@
 - Added isolated WordPress/MySQL CI matrix for PHP 8.3 and WordPress 6.6.10/7.1.3.
 - Pinned the test-suite installer and GitHub Actions; added ZIP validation and local test instructions.
 - Updated vulnerable dev dependencies after `composer audit` identified advisories in prior PHPCS/WPCS/PHPUnit versions.
-# Milestone 4 — WordPress media queue (implemented; CI pending)
+# Milestone 4 — WordPress media queue (implemented; CI verified)
 
 - Added versioned prefixed InnoDB queue/lease tables, atomic claims, job deduplication, bounded retry/backoff, stale recovery, and ownership checks.
 - Added local attachment/thumbnail discovery, individual Media Library queue action, optional off-by-default upload enqueueing, paginated bulk scan, queue controls, persisted progress, and bounded WP-CLI worker.
 - Processing creates separate validated `.jio.webp`/`.jio.avif` files with hidden structured attachment metadata. Originals and core attachment metadata are preserved; derivatives are inactive for frontend delivery.
-- Added packaged-plugin integration cases for image processing, source preservation, queue lifecycle, scanner pagination, and authorization. PHP 8.3 CI results are pending until the workflow runs.
+- Added packaged-plugin integration cases for image processing, source preservation, queue lifecycle, scanner pagination, and authorization. The final PHP 8.3 WordPress/encoder integration passed in [run 42748365437](https://github.com/atiroop/jocky-image-optimizer/actions/runs/42748365437).
 - Replaced nested explicit transactions with single-statement atomic queue/lease claims to preserve WordPress PHPUnit test isolation; corrected same-second worker lease renewal and added idempotent missing-slot recovery.
 - Added minimal `*.php text eol=lf` policy for consistent Windows and CI lint behavior.
