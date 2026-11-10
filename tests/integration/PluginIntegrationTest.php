@@ -96,10 +96,7 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 		$uploads = wp_upload_dir();
 		wp_mkdir_p( $uploads['basedir'] );
 		self::$media_fixture = trailingslashit( $uploads['basedir'] ) . 'jio-integration-sentinel.png';
-		file_put_contents(
-			self::$media_fixture,
-			base64_decode( 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADUlEQVQIHWP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC' )
-		);
+		file_put_contents( self::$media_fixture, self::png_fixture_data() );
 		self::$media_fixture_hash = hash_file( 'sha256', self::$media_fixture );
 	}
 
@@ -121,18 +118,18 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 		$this->assertNull( $wpdb->get_var( "SELECT lock_token FROM {$slots_table} WHERE slot_id = 1" ), 'first worker slot is available after seeding' );
 		$this->assertSame( '', $wpdb->last_error, 'queue schema and seed queries report no database error' );
 
-		$transaction_state = (int) $wpdb->get_var( 'SELECT @@in_transaction' );
+		$commit_count = $this->database_commit_count();
 		$repository        = new JobRepository();
 		$worker_token      = bin2hex( random_bytes( 32 ) );
 		$this->assertTrue( $repository->acquire_slot( $worker_token, 1 ) );
 		$this->assertTrue( $repository->renew_slot( $worker_token ), 'same-second renewal confirms existing token ownership' );
-		$this->assertSame( $transaction_state, (int) $wpdb->get_var( 'SELECT @@in_transaction' ), 'worker leases do not commit WordPress test transactions' );
+		$this->assertSame( $commit_count, $this->database_commit_count(), 'worker leases do not commit WordPress test transactions' );
 		$repository->release_slot( $worker_token );
 		$this->assertFalse( $repository->renew_slot( $worker_token ) );
 
 		$scanner_token = bin2hex( random_bytes( 32 ) );
 		$this->assertTrue( $repository->acquire_scanner_lease( $scanner_token ) );
-		$this->assertSame( $transaction_state, (int) $wpdb->get_var( 'SELECT @@in_transaction' ), 'scanner lease does not commit WordPress test transactions' );
+		$this->assertSame( $commit_count, $this->database_commit_count(), 'scanner lease does not commit WordPress test transactions' );
 		$repository->release_scanner_lease( $scanner_token );
 		$this->assertTrue( $repository->acquire_scanner_lease( bin2hex( random_bytes( 32 ) ) ), 'scanner lease is released for the next page' );
 	}
@@ -332,7 +329,7 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 		$this->assertSame( 0, $integration->enqueue_attachment( $attachment_id ), 'duplicate requests reuse the fingerprinted queue jobs' );
 		$worker = new QueueWorker( $this->jobs );
 		$counts = $worker->run_batch( 10 );
-		$this->assertSame( 2, $counts['completed'] );
+		$this->assertSame( 2, $counts['completed'], wp_json_encode( array( 'counts' => $counts, 'jobs' => $this->jobs->recent() ) ) );
 		$this->assertSame( $source_hash, hash_file( 'sha256', $source ) );
 		$this->assertSame( $attached, get_post_meta( $attachment_id, '_wp_attached_file', true ) );
 		$this->assertSame( $metadata, wp_get_attachment_metadata( $attachment_id ), 'WordPress thumbnail metadata remains unchanged' );
@@ -361,8 +358,10 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 		$this->assertSame( 0, $this->jobs->pending_count() );
 		$this->set_output_format( 'webp', true );
 		$this->assertCount( 2, ( new AttachmentJobFactory() )->jobs_for_attachment( $attachment_id ), 'factory discovers the original and thumbnail for the enabled format' );
+		$this->assertNotFalse( has_filter( 'wp_generate_attachment_metadata' ), 'plugin boot registers automatic upload queueing' );
+		$this->assertTrue( Settings::sanitize( get_option( Plugin::OPTION_NAME ) )['auto_optimize'] );
 		$this->assertSame( $metadata, apply_filters( 'wp_generate_attachment_metadata', $metadata, $attachment_id, 'create' ) );
-		$this->assertSame( 2, $this->jobs->pending_count() );
+		$this->assertSame( 2, $this->jobs->pending_count(), wp_json_encode( array( 'filter_registered' => has_filter( 'wp_generate_attachment_metadata' ), 'settings' => Settings::sanitize( get_option( Plugin::OPTION_NAME ) ), 'jobs' => $this->jobs->recent() ) ) );
 		apply_filters( 'wp_generate_attachment_metadata', $metadata, $attachment_id, 'update' );
 		$this->assertSame( 2, $this->jobs->pending_count() );
 	}
@@ -473,6 +472,16 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 		do_action( 'admin_menu' );
 	}
 
+	/** Returns the MySQL session commit counter to detect nested transaction commits.
+	 *
+	 * @return int MySQL COMMIT statement count for this connection.
+	 */
+	private function database_commit_count(): int {
+		global $wpdb;
+		$status = $wpdb->get_row( "SHOW SESSION STATUS LIKE 'Com_commit'", ARRAY_N );
+		return is_array( $status ) && isset( $status[1] ) ? (int) $status[1] : -1;
+	}
+
 	/** Creates an isolated real attachment fixture with optional registered thumbnail metadata.
 	 *
 	 * @param string $name       Safe fixture name.
@@ -485,7 +494,7 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 		wp_mkdir_p( $directory );
 		$this->test_media_directories[] = $directory;
 		$source                         = trailingslashit( $directory ) . sanitize_file_name( $name ) . '.png';
-		$data                           = base64_decode( 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADUlEQVQIHWP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC', true );
+		$data                           = self::png_fixture_data();
 		file_put_contents( $source, $data );
 		$attachment_id = wp_insert_attachment(
 			array(
@@ -534,6 +543,19 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 			)
 		);
 		return array( $attachment_id, $source, wp_get_attachment_metadata( $attachment_id ) );
+	}
+
+	/** Builds a deterministic transparent PNG with valid chunk CRCs.
+	 *
+	 * @return string PNG fixture bytes.
+	 */
+	private static function png_fixture_data(): string {
+		$chunk = static function ( string $type, string $data ): string {
+			return pack( 'N', strlen( $data ) ) . $type . $data . pack( 'H*', hash( 'crc32b', $type . $data ) );
+		};
+		$header = pack( 'NNCCCCC', 1, 1, 8, 6, 0, 0, 0 );
+		$image  = gzcompress( "\0\xff\0\0\0" );
+		return "\x89PNG\r\n\x1a\n" . $chunk( 'IHDR', $header ) . $chunk( 'IDAT', $image ) . $chunk( 'IEND', '' );
 	}
 
 	/** Selects a sanitized derivative target for integration tests.
