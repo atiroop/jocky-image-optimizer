@@ -6,6 +6,8 @@ The feature implementation is on `feature/milestone-5-backup-restore`, created f
 
 The previous implementation passed GitHub Actions [run 42776251310](https://github.com/atiroop/jocky-image-optimizer/actions/runs/42776251310) on commit `c9ade98b3f6a701784fe99dc0585d239bb18e92d`; all five jobs succeeded. This acceptance audit found and fixed the active-job state mismatch and normalized legacy scanner progress state. The audit fixes and new regression tests require a fresh CI run before merge readiness can be claimed.
 
+Audit run [42778390911](https://github.com/atiroop/jocky-image-optimizer/actions/runs/42778390911) passed static/unit and real encoder jobs, but both WordPress jobs failed on the new corrupted-source status assertion: an existing but invalid image was classified as `source_missing`. The implementation now distinguishes an absent tracked source (`source_missing`) from a present source that cannot be resolved as a valid current image (`source_changed`). The next run must pass the expanded regressions and the WP-CLI smoke before readiness can be reconsidered.
+
 | Check | Result | Evidence / limitation |
 |---|---|---|
 | WPCS | Passed locally | `composer lint`: 0 errors and 0 warnings after remediation. |

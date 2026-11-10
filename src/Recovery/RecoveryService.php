@@ -360,8 +360,10 @@ final class RecoveryService {
 		$source_hash     = null;
 		$derivative_hash = null;
 		$status          = 'valid';
-		if ( null === $current_target || null === $source_path ) {
+		if ( null === $source_path ) {
 			$status = 'source_missing';
+		} elseif ( null === $current_target ) {
+			$status = 'source_changed';
 		} elseif ( ! hash_equals( (string) $record['source_relative_path'], $current_target['relative_path'] ) || ! hash_equals( (string) $record['source_fingerprint'], $current_target['fingerprint'] ) || ! hash_equals( (string) $record['source_mime'], $current_target['mime'] ) || ! hash_equals( (string) $record['metadata_hash'], $metadata_hash ) ) {
 			$status = 'source_changed';
 		} elseif ( ! hash_equals( $this->expected_derivative_path( (string) $record['source_relative_path'], (string) $record['output_format'], (string) $record['source_mime'] ), (string) $record['derivative_relative_path'] ) ) {
