@@ -1,17 +1,20 @@
 # Validation
 
-## Milestone 4.5 beta release — validation in progress
+## Milestone 4.5 beta release — CI verified
 
 Target release: `0.4.0-beta`. The dedicated branch is `feature/milestone-4-5-beta-release`, based on verified main commit `092d5cfc26e6f83632c8a955ff46456fe14cc064`.
 
+The first beta release validation completed successfully in [GitHub Actions run 42752210121](https://github.com/atiroop/jocky-image-optimizer/actions/runs/42752210121), commit `8610c2e25f8a4e6a3bf9a98944002858f6a9ee6e`.
+
 | Check | Result | Evidence / limitation |
 |---|---|---|
-| Plugin version | Implemented; pending CI | Header and `JIO_VERSION` are both `0.4.0-beta`; the package builder derives its archive filename from these matching values. |
-| Local ZIP build | Passed locally | Rebuilt after `composer install --no-dev`; `php scripts/validate-package.php` passed using `ZipArchive::CHECKCONS`. Archive: `build/jocky-image-optimizer-0.4.0-beta.zip`, 76,115 bytes, SHA-256 `444b23d617d5f2717b15b3f3dc7ddc0c9b2085c5f61001e5e60bf7055666e9a5`. Windows `unzip` is unavailable locally; CI runs `unzip -t`. |
-| ZIP contents | Passed locally | 52 entries with exactly one root, `jocky-image-optimizer/`; validator checks each file, required production autoloader files, matching versions, and absence of development packages, credentials, test fixtures, and repository-only files. |
-| PHP 8.3 / WordPress 6.6.11 and 7.1.4 ZIP install | Pending CI | Each integration matrix job installs the exact generated production ZIP into disposable WordPress/MySQL, activates it, and runs the real integration suite. |
-| JPEG/PNG derivative behavior | Pending CI | PHP GD creates the JPEG integration fixture; the WordPress jobs install `cwebp`. PNG coverage verifies thumbnail and original derivatives. Tests compare original hashes and WordPress metadata before/after processing. |
-| Artifact publication | Pending CI | A gated job uploads the installable beta ZIP as `jocky-image-optimizer-0.4.0-beta` only after static, encoder, and both WordPress integration jobs succeed. |
+| Plugin version | Passed | Header and `JIO_VERSION` are both `0.4.0-beta`; the package builder derives its archive filename from the matching values. |
+| WPCS, PHP syntax, standalone tests | Passed | `static-and-unit` passed WPCS, PHP syntax, 30 standalone checks, Composer validation, and `composer audit --locked`. |
+| Real encoder integration | Passed | `encoder-integration` built pinned MozJPEG, installed pngquant/oxipng, and passed the real fixture suite. |
+| PHP 8.3 / WordPress 6.6.11 and 7.1.4 ZIP install | Passed | Both disposable WordPress/MySQL matrix jobs built and verified the production ZIP, installed it, activated it, and passed the WordPress integration suite, including database schema and worker-slot checks. |
+| JPEG/PNG derivative behavior | Passed | WP jobs used GD to create a JPEG fixture and `cwebp` to create derivatives. Tests covered JPEG/PNG queue processing, bounded batches/progress, default-off automatic optimization, missing encoder diagnostics, source hashes, and unchanged core attachment paths/metadata. |
+| Artifact publication | Passed | The gated `beta-package-artifact` job uploaded non-empty artifact `jocky-image-optimizer-0.4.0-beta` (69,999 bytes, Actions artifact ID `13734097455`). [Download artifact](https://github.com/atiroop/jocky-image-optimizer/actions/runs/42752210121/artifacts/13734097455). |
+| Downloaded production ZIP | Passed | Downloaded from the artifact and revalidated with `php scripts/validate-package.php`/ZipArchive `CHECKCONS`: one top-level root `jocky-image-optimizer/`, 52 entries, inner ZIP size 76,103 bytes, SHA-256 `237c7f9232bc9719f64b3f236141c378740350fbd8822ef3b30e5d21ea8c613c`. |
 | Local PHP runtime | Partial | This Windows workspace has PHP 8.5.0, not PHP 8.3. CI is the authoritative PHP 8.3 and disposable WordPress/MySQL validation. |
 
 ## Milestone 4 implementation — CI repair in progress
