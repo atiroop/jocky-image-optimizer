@@ -474,6 +474,21 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 			);
 		}
 		wp_update_attachment_metadata( $attachment_id, $metadata );
+		$this->assertNotEmpty(
+			( new AttachmentTargetProvider() )->targets( $attachment_id ),
+			wp_json_encode(
+				array(
+					'post_type'      => get_post_type( $attachment_id ),
+					'post_mime_type' => get_post_mime_type( $attachment_id ),
+					'uploads_root'   => wp_upload_dir()['basedir'],
+					'attached_file'  => get_attached_file( $attachment_id ),
+					'unfiltered_file' => get_attached_file( $attachment_id, true ),
+					'file_mime'      => wp_get_image_mime( $source ),
+					'file_exists'    => is_file( $source ),
+					'file_readable'  => is_readable( $source ),
+				)
+			)
+		);
 		return array( $attachment_id, $source, wp_get_attachment_metadata( $attachment_id ) );
 	}
 
