@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.0-beta — First installable beta
+
+- Set the plugin header and runtime version to `0.4.0-beta` and generate a correspondingly versioned production ZIP.
+- Add strict ZIP integrity checks for a single `jocky-image-optimizer/` root, matching plugin version, required runtime autoloader, and absence of development tools and repository/test files.
+- Extend PHP 8.3 CI to install and activate the production ZIP against disposable WordPress 6.6.11 and 7.1.4 databases, including schema/worker-slot/default-setting checks and real PNG/JPEG-to-WebP attachment processing.
+- Publish the tested installable ZIP as the `jocky-image-optimizer-0.4.0-beta` GitHub Actions artifact after all validation jobs pass.
+- Document Dashboard installation, encoder prerequisites, and beta limitations.
+
 ## Milestone 3 — WebP and AVIF conversion (implemented; CI verified 2026-11-10)
 
 - Added explicit cwebp and avifenc adapters for JPEG/PNG input, lossy/lossless modes, encoder-specific quality, bounded AVIF speed/thread settings, and optional retention of larger valid derivatives.

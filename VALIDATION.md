@@ -1,5 +1,19 @@
 # Validation
 
+## Milestone 4.5 beta release — validation in progress
+
+Target release: `0.4.0-beta`. The dedicated branch is `feature/milestone-4-5-beta-release`, based on verified main commit `092d5cfc26e6f83632c8a955ff46456fe14cc064`.
+
+| Check | Result | Evidence / limitation |
+|---|---|---|
+| Plugin version | Implemented; pending CI | Header and `JIO_VERSION` are both `0.4.0-beta`; the package builder derives its archive filename from these matching values. |
+| Local ZIP build | Passed locally | Rebuilt after `composer install --no-dev`; `php scripts/validate-package.php` passed using `ZipArchive::CHECKCONS`. Archive: `build/jocky-image-optimizer-0.4.0-beta.zip`, 76,115 bytes, SHA-256 `444b23d617d5f2717b15b3f3dc7ddc0c9b2085c5f61001e5e60bf7055666e9a5`. Windows `unzip` is unavailable locally; CI runs `unzip -t`. |
+| ZIP contents | Passed locally | 52 entries with exactly one root, `jocky-image-optimizer/`; validator checks each file, required production autoloader files, matching versions, and absence of development packages, credentials, test fixtures, and repository-only files. |
+| PHP 8.3 / WordPress 6.6.11 and 7.1.4 ZIP install | Pending CI | Each integration matrix job installs the exact generated production ZIP into disposable WordPress/MySQL, activates it, and runs the real integration suite. |
+| JPEG/PNG derivative behavior | Pending CI | PHP GD creates the JPEG integration fixture; the WordPress jobs install `cwebp`. PNG coverage verifies thumbnail and original derivatives. Tests compare original hashes and WordPress metadata before/after processing. |
+| Artifact publication | Pending CI | A gated job uploads the installable beta ZIP as `jocky-image-optimizer-0.4.0-beta` only after static, encoder, and both WordPress integration jobs succeed. |
+| Local PHP runtime | Partial | This Windows workspace has PHP 8.5.0, not PHP 8.3. CI is the authoritative PHP 8.3 and disposable WordPress/MySQL validation. |
+
 ## Milestone 4 implementation — CI repair in progress
 
 The feature branch now contains WordPress Media Library queue integration. The code and integration coverage are implemented, but this section must not be read as CI verification until GitHub Actions completes successfully for the pushed commit.

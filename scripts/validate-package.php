@@ -2,7 +2,15 @@
 
 declare(strict_types=1);
 
-$archive_path = $argv[1] ?? dirname( __DIR__ ) . '/build/jocky-image-optimizer-0.1.0-dev.zip';
+$root = dirname( __DIR__ );
+require_once __DIR__ . DIRECTORY_SEPARATOR . 'package-version.php';
+try {
+	$version = jio_package_version( $root );
+} catch ( RuntimeException $exception ) {
+	fwrite( STDERR, $exception->getMessage() . PHP_EOL );
+	exit( 1 );
+}
+$archive_path = $argv[1] ?? $root . '/build/jocky-image-optimizer-' . $version . '.zip';
 $required     = array(
 	'jocky-image-optimizer/jocky-image-optimizer.php',
 	'jocky-image-optimizer/vendor/autoload.php',
@@ -16,20 +24,36 @@ if ( ! class_exists( ZipArchive::class ) ) {
 }
 
 $archive = new ZipArchive();
-if ( true !== $archive->open( $archive_path ) ) {
+if ( true !== $archive->open( $archive_path, ZipArchive::CHECKCONS ) ) {
 	fwrite( STDERR, "Unable to open plugin ZIP: {$archive_path}\n" );
 	exit( 1 );
 }
 
 $entries = array();
+$top_level_directories = array();
 for ( $index = 0; $index < $archive->numFiles; ++$index ) {
 	$entry = $archive->getNameIndex( $index );
-	if ( ! is_string( $entry ) || 0 !== strpos( $entry, 'jocky-image-optimizer/' ) || false !== strpos( $entry, '../' ) ) {
+	if ( ! is_string( $entry ) || 0 !== strpos( $entry, 'jocky-image-optimizer/' ) || false !== strpos( $entry, '../' ) || false !== strpos( $entry, '\\' ) ) {
 		$archive->close();
 		fwrite( STDERR, "ZIP contains a path outside the expected plugin directory.\n" );
 		exit( 1 );
 	}
+	$top_level_directories[ explode( '/', $entry )[0] ] = true;
+	if ( false === str_ends_with( $entry, '/' ) ) {
+		$stat    = $archive->statIndex( $index );
+		$payload = $archive->getFromIndex( $index );
+		if ( ! is_array( $stat ) || ! is_string( $payload ) || strlen( $payload ) !== (int) $stat['size'] ) {
+			$archive->close();
+			fwrite( STDERR, "ZIP contains an unreadable or truncated file.\n" );
+			exit( 1 );
+		}
+	}
 	$entries[] = $entry;
+}
+if ( 1 !== count( $top_level_directories ) || ! isset( $top_level_directories['jocky-image-optimizer'] ) || 0 === $archive->numFiles ) {
+	$archive->close();
+	fwrite( STDERR, "ZIP must contain exactly one non-empty jocky-image-optimizer top-level directory.\n" );
+	exit( 1 );
 }
 
 foreach ( $required as $entry ) {
@@ -41,7 +65,7 @@ foreach ( $required as $entry ) {
 }
 
 foreach ( $entries as $entry ) {
-	if ( preg_match( '~^jocky-image-optimizer/(?:vendor/(?:phpunit|squizlabs|wp-coding-standards|phpcsstandards|dealerdirect)/|tests/|bin/|scripts/|\.github/|composer\.(?:json|lock)$|php(?:cs|unit)\.xml\.dist$)~', $entry ) ) {
+	if ( preg_match( '~^jocky-image-optimizer/(?:vendor/(?:phpunit|squizlabs|wp-coding-standards|phpcsstandards|dealerdirect)/|tests/|bin/|scripts/|\.github/|composer\.(?:json|lock)$|php(?:cs|unit)\.xml\.dist$|(?:AGENTS|SPEC|ROADMAP|ARCHITECTURE|VALIDATION)\.md$|(?:\.git|\.env|\.codex|\.gitattributes)(?:/|$))~', $entry ) || preg_match( '~(?:^|/)(?:\.env(?:\.[^/]*)?|id_rsa(?:\.pub)?|id_ed25519(?:\.pub)?|credentials(?:\.[^/]*)?|secrets?(?:\.[^/]*)?)$|\.(?:pem|p12|pfx|key)$~i', $entry ) ) {
 		$archive->close();
 		fwrite( STDERR, "ZIP contains a development-only file: {$entry}\n" );
 		exit( 1 );
@@ -52,6 +76,7 @@ $installed_json = $archive->getFromName( 'jocky-image-optimizer/vendor/composer/
 $runtime_autoload = $archive->getFromName( 'jocky-image-optimizer/vendor/autoload.php' );
 $runtime_autoload_real = $archive->getFromName( 'jocky-image-optimizer/vendor/composer/autoload_real.php' );
 $runtime_autoload_static = $archive->getFromName( 'jocky-image-optimizer/vendor/composer/autoload_static.php' );
+$plugin_entry            = $archive->getFromName( 'jocky-image-optimizer/jocky-image-optimizer.php' );
 $archive->close();
 $runtime_loader_files = array( $runtime_autoload, $runtime_autoload_real, $runtime_autoload_static );
 foreach ( $runtime_loader_files as $loader_file ) {
@@ -63,6 +88,11 @@ foreach ( $runtime_loader_files as $loader_file ) {
 $installed = is_string( $installed_json ) ? json_decode( $installed_json, true ) : null;
 if ( ! is_array( $installed ) || ! array_key_exists( 'dev', $installed ) || true === $installed['dev'] ) {
 	fwrite( STDERR, "ZIP Composer metadata does not identify a production-only install.\n" );
+	exit( 1 );
+}
+
+if ( ! is_string( $plugin_entry ) || 1 !== preg_match( '/^\s*\* Version:\s*([0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.]+)?)\s*$/m', $plugin_entry, $header ) || $version !== $header[1] || 1 !== preg_match( "/define\(\s*'JIO_VERSION'\s*,\s*'" . preg_quote( $version, '/' ) . "'\s*\)/", $plugin_entry ) ) {
+	fwrite( STDERR, "ZIP plugin version does not match the package version.\n" );
 	exit( 1 );
 }
 

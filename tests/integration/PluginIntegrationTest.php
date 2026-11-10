@@ -180,6 +180,17 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 		$this->assertSame( self::$media_fixture_hash, hash_file( 'sha256', self::$media_fixture ) );
 	}
 
+	public function test_beta_zip_activation_initializes_queue_schema_and_safe_defaults(): void {
+		global $wpdb;
+		$this->assertSame( '0.4.0-beta', JIO_VERSION );
+		$this->assertTrue( is_plugin_active( self::PLUGIN ) );
+		$this->assertFalse( Settings::sanitize( get_option( Plugin::OPTION_NAME ) )['auto_optimize'] );
+		$this->assertSame( QueueSchema::VERSION, (int) get_option( QueueSchema::OPTION ) );
+		$this->assertSame( QueueSchema::jobs_table(), $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', QueueSchema::jobs_table() ) ) );
+		$this->assertSame( QueueSchema::slots_table(), $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', QueueSchema::slots_table() ) ) );
+		$this->assertSame( array( 0, 1, 2, 3, 4 ), array_map( 'intval', (array) $wpdb->get_col( 'SELECT slot_id FROM ' . QueueSchema::slots_table() . ' ORDER BY slot_id ASC' ) ) );
+	}
+
 	public function test_media_row_action_and_queue_controls_require_administrator_capability(): void {
 		[ $attachment_id ] = $this->create_png_attachment( 'permissions', false );
 		$integration       = new MediaIntegration( $this->jobs, new QueueWorker( $this->jobs ) );
@@ -272,6 +283,11 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 
 			putenv( 'PATH=' );
 			$this->assertFalse( ( new CapabilityDetector() )->detect()['pngquant']['available'] );
+			ob_start();
+			( new AdminPages( new CapabilityDetector() ) )->render_dashboard();
+			$missing_encoder_page = (string) ob_get_clean();
+			$this->assertStringContainsString( 'Unavailable', $missing_encoder_page );
+			$this->assertStringContainsString( 'Executable not found on PATH', $missing_encoder_page );
 		} finally {
 			if ( false !== $previous_path ) {
 				putenv( 'PATH=' . $previous_path );
@@ -323,9 +339,14 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 		$integration                           = new MediaIntegration( $this->jobs, new QueueWorker( $this->jobs ) );
 		$this->assertSame( 2, $integration->enqueue_attachment( $attachment_id ) );
 		$this->assertSame( 0, $integration->enqueue_attachment( $attachment_id ), 'duplicate requests reuse the fingerprinted queue jobs' );
-		$worker = new QueueWorker( $this->jobs );
-		$counts = $worker->run_batch( 10 );
-		$this->assertSame( 2, $counts['completed'], wp_json_encode( array( 'counts' => $counts, 'jobs' => $this->jobs->recent() ) ) );
+		$worker       = new QueueWorker( $this->jobs );
+		$first_batch  = $worker->run_batch( 1 );
+		$this->assertSame( 1, $first_batch['completed'], 'one-item worker batch makes bounded progress' );
+		$this->assertSame( 1, $this->jobs->pending_count(), 'one thumbnail job remains for the next worker batch' );
+		$this->assertSame( 1, $this->jobs->stats()['completed'] );
+		$second_batch = $worker->run_batch( 1 );
+		$this->assertSame( 1, $second_batch['completed'], wp_json_encode( array( 'counts' => $second_batch, 'jobs' => $this->jobs->recent() ) ) );
+		$this->assertSame( 0, $this->jobs->pending_count() );
 		$this->assertSame( $source_hash, hash_file( 'sha256', $source ) );
 		$this->assertSame( $attached, get_post_meta( $attachment_id, '_wp_attached_file', true ) );
 		$this->assertSame( $metadata, wp_get_attachment_metadata( $attachment_id ), 'WordPress thumbnail metadata remains unchanged' );
@@ -348,6 +369,22 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 		$this->assertStringContainsString( 'Attachments processed', $dashboard );
 		$this->assertStringContainsString( 'Measured derivative byte delta', $dashboard );
 		$this->assertStringNotContainsString( $source, $dashboard );
+	}
+
+	public function test_jpeg_attachment_creates_webp_derivative_and_preserves_original_and_metadata(): void {
+		$this->set_output_format( 'webp' );
+		[ $attachment_id, $source, $metadata ] = $this->create_jpeg_attachment( 'jpeg-single' );
+		$source_hash                           = hash_file( 'sha256', $source );
+		$attached                              = get_post_meta( $attachment_id, '_wp_attached_file', true );
+		$integration                           = new MediaIntegration( $this->jobs, new QueueWorker( $this->jobs ) );
+		$this->assertSame( 1, $integration->enqueue_attachment( $attachment_id ) );
+		$counts = ( new QueueWorker( $this->jobs ) )->run_batch( 1 );
+		$this->assertSame( 1, $counts['completed'] );
+		$this->assertSame( $source_hash, hash_file( 'sha256', $source ) );
+		$this->assertSame( $attached, get_post_meta( $attachment_id, '_wp_attached_file', true ) );
+		$this->assertSame( $metadata, wp_get_attachment_metadata( $attachment_id ) );
+		$this->assertFileExists( preg_replace( '/\.jpg$/', '.jio.webp', $source ) );
+		$this->assertSame( 0, $this->jobs->pending_count(), 'bounded worker batch leaves no second job for this JPEG' );
 	}
 
 	public function test_automatic_queueing_is_off_by_default_and_deduplicates_after_metadata_generation(): void {
@@ -540,6 +577,55 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 				)
 			)
 		);
+		return array( $attachment_id, $source, wp_get_attachment_metadata( $attachment_id ) );
+	}
+
+	/** Creates a deterministic JPEG attachment fixture under the disposable uploads root.
+	 *
+	 * @param string $name Safe fixture name.
+	 * @return array{int,string,array<string,mixed>} Attachment ID, source path, and metadata.
+	 */
+	private function create_jpeg_attachment( string $name ): array {
+		$uploads   = wp_upload_dir();
+		$directory = trailingslashit( $uploads['basedir'] ) . 'jio-m4-' . sanitize_file_name( $name ) . '-' . bin2hex( random_bytes( 4 ) );
+		wp_mkdir_p( $directory );
+		$this->test_media_directories[] = $directory;
+		$source                         = trailingslashit( $directory ) . sanitize_file_name( $name ) . '.jpg';
+		$image                          = imagecreatetruecolor( 192, 128 );
+		$this->assertNotFalse( $image );
+		$colors = array(
+			imagecolorallocate( $image, 20, 80, 180 ),
+			imagecolorallocate( $image, 220, 40, 60 ),
+			imagecolorallocate( $image, 20, 170, 90 ),
+			imagecolorallocate( $image, 240, 190, 30 ),
+		);
+		imagefill( $image, 0, 0, $colors[0] );
+		for ( $index = 0; $index < 4; ++$index ) {
+			imagefilledrectangle( $image, $index * 48, 0, ( $index + 1 ) * 48 - 1, 127, $colors[ $index ] );
+		}
+		$this->assertTrue( imagejpeg( $image, $source, 88 ) );
+		imagedestroy( $image );
+		$attachment_id = wp_insert_attachment(
+			array(
+				'post_mime_type' => 'image/jpeg',
+				'post_title'     => 'JIO M4 ' . $name,
+				'post_status'    => 'inherit',
+			),
+			$source,
+			0,
+			true
+		);
+		$this->assertIsInt( $attachment_id );
+		update_attached_file( $attachment_id, $source );
+		$this->test_attachment_ids[] = $attachment_id;
+		$metadata                    = array(
+			'file'       => ltrim( str_replace( wp_normalize_path( $uploads['basedir'] ) . '/', '', wp_normalize_path( $source ) ), '/' ),
+			'width'      => 192,
+			'height'     => 128,
+			'sizes'      => array(),
+			'image_meta' => array(),
+		);
+		wp_update_attachment_metadata( $attachment_id, $metadata );
 		return array( $attachment_id, $source, wp_get_attachment_metadata( $attachment_id ) );
 	}
 
