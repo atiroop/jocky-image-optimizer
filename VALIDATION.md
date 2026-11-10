@@ -1,5 +1,28 @@
 # Validation
 
+## Milestone 4 implementation — CI repair in progress
+
+The feature branch now contains WordPress Media Library queue integration. The code and integration coverage are implemented, but this section must not be read as CI verification until GitHub Actions completes successfully for the pushed commit.
+
+| Check | Result | Evidence / limitation |
+|---|---|---|
+| Scope and branch | Implemented | Started from the clean Milestone 3 `main` commit `94994f208a32660434bdff45c1f1371acf747772` and created `feature/milestone-4-wordpress-media`. No production/VPS access. |
+| WPCS | Passed locally | `composer lint` passed after applying the requested `*.php text eol=lf` policy. PHP files were normalized in the worktree; the `.gitattributes` rule prevents broad content diffs. |
+| Standalone tests | Passed locally | `composer test`: all 30 assertions passed. This does not replace WordPress database integration. |
+| Composer | Passed locally | `composer validate --no-check-publish` and `composer audit --locked` passed. |
+| WordPress integration | Not run locally | This Windows environment has no PHP 8.3, disposable WordPress/MySQL test runtime, or Docker. The CI matrix is configured for PHP 8.3 and WordPress 6.6.11/7.1.4 and will exercise the generated production ZIP. |
+| Real media encoder in Media Library | Not run locally | Linux `cwebp` is unavailable here. CI's disposable WordPress jobs install Ubuntu's `webp` package to run actual PNG-to-WebP attachment/thumbnail processing. Milestone 3's real encoder CI remains prior evidence for the engine, not this integration. |
+| Package / ZIP | Passed locally | `composer test:package` passed for the existing production archive; CI rebuilds it from the pushed source before integration. |
+| Latest GitHub Actions | Passed | [Run 42748365437](https://github.com/atiroop/jocky-image-optimizer/actions/runs/42748365437), commit `0af6446ccde0fa5e089ac138f21b959e4995d810`: all four jobs passed, including real encoder integration, production ZIP builds, and WordPress 6.6.11 / 7.1.4 integration on PHP 8.3. |
+
+### Confirmed queue investigation and current repair status
+
+Inspection of WordPress's PHPUnit test base confirmed it starts a database transaction for each test (`SET autocommit=0; START TRANSACTION`) and rolls it back in teardown. The previous repository issued nested `START TRANSACTION` and `COMMIT` calls for claims and leases, which could commit the test's outer transaction and invalidate fixture isolation. Independently, `renew_slot()` treated the changed-row count as proof of ownership; MySQL reports zero changed rows when the lease timestamp update falls within the same UTC second, causing the worker to stop before claiming any job. The previous run's fixture diagnostic showed the real attachment provider returned targets, so attachment discovery itself was not the common cause.
+
+The focused repair replaces explicit transaction blocks with atomic conditional InnoDB updates for slot claims, scanner leases, and job claims; renewal now checks the ownership token even when no timestamp value changed. Schema checks reseed missing slot rows even when the stored version is current, and PHPUnit schema installation is moved to class setup rather than repeated per-test DDL. Run 42747927921 confirmed that the old PNG fixture failed the production validator's chunk CRC check; a generated valid-CRC PNG allowed worker processing to complete. It also confirmed the upload hook was absent because a static test guard fired `plugins_loaded` only once, while WordPress PHPUnit resets hooks between tests. The test now boots the plugin composition root for every test and reads derivative records with the single-value metadata API. These fixes passed in run 42748365437 on both configured WordPress versions. Together, the evidence confirms the original transaction-boundary and same-second lease-renewal defects, the invalid integration PNG, and two integration-test harness defects; attachment discovery itself was not the common cause.
+
+Implemented integration coverage includes individual attachment and thumbnail processing, auto enqueue off/on and deduplication, persistent claims/retries/stale recovery/pause/cancel, bounded scanner pagination, source and core metadata preservation, unsupported/deleted/missing media, authorization, dashboard data, and deactivation preservation. Known limits include local upload-root-only processing (remote/offloaded storage is refused), WP-Cron's traffic dependence, cancellation of pending work only, no multisite integration run, and possible operator cleanup if a valid derivative is written but postmeta persistence fails. See `ARCHITECTURE.md` for queue and filesystem details.
+
 ## Milestone 3 validation — 2026-11-10
 
 Milestone 3 is implemented on `feature/milestone-3-webp-avif`. The latest code validation is GitHub Actions run [42735752617](https://github.com/atiroop/jocky-image-optimizer/actions/runs/42735752617), commit `3c8ab941778f96d5aad205d53a4cb0f24181eca6`. All four jobs passed: static/unit, encoder integration, and WordPress integration against 6.6.11 and 7.1.4, using PHP 8.3. Earlier encoder runs exposed the WebP RIFF-size parsing defect; it was fixed before the successful run.
