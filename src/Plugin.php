@@ -40,7 +40,7 @@ final class Plugin {
 
 	/** Adds default settings without replacing existing values. */
 	public static function activate(): void {
-		if ( function_exists( 'dbDelta' ) && isset( $GLOBALS['wpdb'] ) ) {
+		if ( isset( $GLOBALS['wpdb'] ) ) {
 			QueueSchema::install();
 		}
 		if ( get_option( self::OPTION_NAME, false ) === false ) {

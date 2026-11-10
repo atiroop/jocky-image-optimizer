@@ -20,7 +20,7 @@ final class QueueSchema {
 
 	/** Runs the controlled migration only when the stored schema version is old. */
 	public static function maybe_install(): void {
-		if ( ! function_exists( 'dbDelta' ) || ! isset( $GLOBALS['wpdb'] ) ) {
+		if ( ! isset( $GLOBALS['wpdb'] ) ) {
 			return;
 		}
 		if ( (int) get_option( self::OPTION, 0 ) >= self::VERSION ) {
@@ -32,10 +32,13 @@ final class QueueSchema {
 	/** Creates or upgrades queue tables and records the schema version. */
 	public static function install(): void {
 		global $wpdb;
-		if ( ! function_exists( 'dbDelta' ) || ! is_object( $wpdb ) ) {
+		if ( ! is_object( $wpdb ) ) {
 			return;
 		}
 		require_once ABSPATH . 'wp-admin/includes/upgrade.php';
+		if ( ! function_exists( 'dbDelta' ) ) {
+			return;
+		}
 		$collate   = $wpdb->get_charset_collate();
 		$jobs      = $wpdb->prefix . 'jio_jobs';
 		$slots     = $wpdb->prefix . 'jio_worker_slots';
