@@ -20,8 +20,6 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 
 	private const PLUGIN = 'jocky-image-optimizer/jocky-image-optimizer.php';
 
-	private static bool $plugin_booted = false;
-
 	private static string $media_fixture = '';
 
 	private static string $media_fixture_hash = '';
@@ -46,10 +44,8 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 			Plugin::activate();
 		}
 
-		if ( ! self::$plugin_booted ) {
-			do_action( 'plugins_loaded' );
-			self::$plugin_booted = true;
-		}
+		// WordPress PHPUnit resets hooks between tests, so bootstrap each test fixture again.
+		( new Plugin() )->boot();
 		QueueSchema::maybe_install();
 		$this->jobs = new JobRepository();
 		global $wpdb;
@@ -337,9 +333,11 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 		$this->assertFileExists( preg_replace( '/\.png$/', '.jio.webp', dirname( $source ) . '/single-thumbnail.png' ) );
 		$records = array_filter( get_post_meta( $attachment_id ), static fn ( $key ): bool => str_starts_with( (string) $key, '_jio_derivative_' ), ARRAY_FILTER_USE_KEY );
 		$this->assertCount( 2, $records );
-		foreach ( $records as $record ) {
-			$this->assertSame( 'image/webp', $record[0]['mime_type'] );
-			$this->assertStringNotContainsString( ABSPATH, $record[0]['derivative_relative_path'] );
+		foreach ( array_keys( $records ) as $meta_key ) {
+			$record = get_post_meta( $attachment_id, $meta_key, true );
+			$this->assertIsArray( $record );
+			$this->assertSame( 'image/webp', $record['mime_type'] );
+			$this->assertStringNotContainsString( ABSPATH, $record['derivative_relative_path'] );
 		}
 		$this->assertSame( 2, $this->jobs->stats()['completed'] );
 		$user_id = self::factory()->user->create( array( 'role' => 'administrator' ) );
