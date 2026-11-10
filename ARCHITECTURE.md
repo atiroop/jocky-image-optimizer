@@ -22,7 +22,17 @@ The application has no third-party PHP runtime dependencies. Composer provides P
 
 ## Safety boundaries
 
-There are no upload hooks, attachment replacement, thumbnail mutation, queues, or uninstall deletion behavior. The explicit API writes only a separate destination beneath configured roots. Staging uses a private mode-0700 temporary directory; after validation, the engine promotes the file with same-filesystem hard-link creation that does not replace an existing path. Filesystems without hard links fail closed. This assumes the configured managed roots and their parent directories are trusted and not writable by hostile local users; PHP has no portable openat-style directory-handle API to eliminate all path replacement races. Concurrency is one operation per caller. Activation preserves an existing option.
+The explicit engine API writes only a separate destination beneath configured roots. Staging uses a private mode-0700 temporary directory; after validation, the engine promotes the file with same-filesystem hard-link creation that does not replace an existing path. Filesystems without hard links fail closed. This assumes the configured managed roots and their parent directories are trusted and not writable by hostile local users; PHP has no portable openat-style directory-handle API to eliminate all path replacement races. Activation preserves existing settings.
+
+## Milestone 4 queue and media flow
+
+`QueueSchema` installs versioned `{prefix}jio_jobs` and `{prefix}jio_worker_slots` InnoDB tables with `dbDelta`; activation and normal bootstrap both check for schema upgrades. Unique job keys prevent duplicate requests for the same attachment variant, output format, and source fingerprint. Claims and worker/scanner leases use transactions, row locks, and ownership tokens. Jobs have bounded retries with exponential backoff and stale lease recovery. Deactivation preserves tables, jobs, and derivatives.
+
+`MediaIntegration` exposes a Media Library row action and optionally listens to `wp_generate_attachment_metadata` only to enqueue after core generates sizes; it returns the input metadata unchanged. `AttachmentTargetProvider` uses attachment APIs and current upload-root checks to accept local JPEG/PNG originals and registered sizes. It refuses paths changed by storage filters, symlinks, escapes, missing files, and unsupported media. `AttachmentProcessor` reuses the existing optimizer and writes separate deterministic `.jio.*` destinations. A hidden `_jio_derivative_<hash>` record stores relative paths, fingerprint, MIME, byte counts, and timestamp. Derivatives are validated and remain inactive for frontend delivery.
+
+`BulkScanner` uses an attachment-ID cursor and bounded pages, with a dedicated slot preventing overlapping scans. The worker handles one job per cron tick, and WP-CLI accepts batches up to ten. WP-Cron depends on site traffic; operators can schedule `wp jio worker run --batch-size=10` externally. The plugin does not install cron or run a daemon. Direct uncached SQL is required for transactional queue claims; values are prepared and table identifiers come from the trusted `$wpdb->prefix`.
+
+The resolver assumes local files under the active site's upload base directory. Filtered/offloaded storage is refused. Multisite uses the current site's `wp_upload_dir()` root but has not been tested in a multisite suite. Portable PHP cannot eliminate every filesystem TOCTOU race when parent directories are writable by hostile local users. Cancellation affects pending jobs only. If metadata persistence fails after a valid derivative is written, the retry will not overwrite that derivative; operator cleanup may be needed.
 
 ## Planned processing boundary
 

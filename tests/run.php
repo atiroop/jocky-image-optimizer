@@ -116,7 +116,7 @@ $assert( $settings['max_width'] === 0 && $settings['max_height'] === 640, 'dimen
 $assert( $settings['auto_optimize'] === true && $settings['keep_backup'] === true, 'checkbox values are normalized safely' );
 $false_settings = Settings::sanitize( array( 'auto_optimize' => 'false', 'keep_backup' => 'false' ) );
 $assert( $false_settings['auto_optimize'] === false && $false_settings['keep_backup'] === true, 'unrecognized boolean strings do not enable settings' );
-$assert( $settings['concurrency'] === 1, 'concurrency cannot exceed one in Milestone 1' );
+$assert( $settings['concurrency'] === 4, 'worker concurrency is capped at four configured slots' );
 $assert( count( ( new CapabilityDetector() )->detect() ) >= 8, 'capability detector reports configured runtime checks' );
 
 Plugin::activate();

@@ -49,3 +49,10 @@
 - Added isolated WordPress/MySQL CI matrix for PHP 8.3 and WordPress 6.6.10/7.1.3.
 - Pinned the test-suite installer and GitHub Actions; added ZIP validation and local test instructions.
 - Updated vulnerable dev dependencies after `composer audit` identified advisories in prior PHPCS/WPCS/PHPUnit versions.
+# Milestone 4 — WordPress media queue (implemented; CI pending)
+
+- Added versioned prefixed InnoDB queue/lease tables, atomic claims, job deduplication, bounded retry/backoff, stale recovery, and ownership checks.
+- Added local attachment/thumbnail discovery, individual Media Library queue action, optional off-by-default upload enqueueing, paginated bulk scan, queue controls, persisted progress, and bounded WP-CLI worker.
+- Processing creates separate validated `.jio.webp`/`.jio.avif` files with hidden structured attachment metadata. Originals and core attachment metadata are preserved; derivatives are inactive for frontend delivery.
+- Added packaged-plugin integration cases for image processing, source preservation, queue lifecycle, scanner pagination, and authorization. PHP 8.3 CI results are pending until the workflow runs.
+- Added minimal `*.php text eol=lf` policy for consistent Windows and CI lint behavior.

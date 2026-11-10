@@ -21,7 +21,11 @@ Establish plugin metadata/bootstrap, Composer PSR-4 loading, activation/deactiva
 
 ## Explicitly deferred
 
-Automatic WebP/AVIF delivery, upload hooks, queues and bulk actions, originals backup/restoration, storage adapters, R2 integration, and production hardening beyond the foundation requirements.
+Automatic WebP/AVIF delivery, originals backup/restoration, storage adapters, R2 integration, and production hardening beyond the foundation requirements. Milestone 4 queues uploads but does not encode during upload. It creates separate inactive derivatives and does not rewrite URLs or core metadata.
+
+## Milestone 4 processing
+
+The Media Library supports capability-protected individual enqueueing and a paginated bulk scanner. Automatic enqueueing is optional and disabled by default. A versioned, prefixed InnoDB queue persists bounded jobs and leases, uses fingerprint deduplication, atomic claims, ownership tokens, retries/backoff, and stale recovery. WP-Cron runs one item per tick; WP-CLI supports bounded batches. Local JPEG/PNG originals and registered sizes are converted according to the output setting. Remote/offloaded and unsupported media are skipped. Cancellation applies to pending jobs; active encoders finish. Statistics use persisted job and derivative data and do not imply physical disk savings while originals remain.
 
 ## Compatibility targets
 

@@ -4,6 +4,14 @@ declare(strict_types=1);
 
 use Jocky\ImageOptimizer\Admin\AdminPages;
 use Jocky\ImageOptimizer\CapabilityDetector;
+use Jocky\ImageOptimizer\Media\AttachmentTargetProvider;
+use Jocky\ImageOptimizer\Media\MediaIntegration;
+use Jocky\ImageOptimizer\Queue\AttachmentJobFactory;
+use Jocky\ImageOptimizer\Queue\BulkScanner;
+use Jocky\ImageOptimizer\Queue\JobRepository;
+use Jocky\ImageOptimizer\Queue\QueueSchema;
+use Jocky\ImageOptimizer\Queue\QueueState;
+use Jocky\ImageOptimizer\Queue\QueueWorker;
 use Jocky\ImageOptimizer\Plugin;
 use Jocky\ImageOptimizer\Settings;
 
@@ -17,6 +25,12 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 	private static string $media_fixture = '';
 
 	private static string $media_fixture_hash = '';
+
+	private JobRepository $jobs;
+
+	private array $test_media_directories = array();
+
+	private array $test_attachment_ids = array();
 
 	protected function setUp(): void {
 		parent::setUp();
@@ -36,9 +50,40 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 			do_action( 'plugins_loaded' );
 			self::$plugin_booted = true;
 		}
+		QueueSchema::install();
+		$this->jobs = new JobRepository();
+		global $wpdb;
+		$wpdb->query( 'DELETE FROM ' . QueueSchema::jobs_table() );
+		$wpdb->query( 'UPDATE ' . QueueSchema::slots_table() . ' SET lock_token = NULL, locked_at = NULL' );
+		wp_clear_scheduled_hook( QueueWorker::CRON_HOOK );
+		wp_clear_scheduled_hook( BulkScanner::CRON_HOOK );
+		delete_option( BulkScanner::STATE );
+		QueueState::resume();
+		$this->test_media_directories = array();
+		$this->test_attachment_ids    = array();
 	}
 
 	protected function tearDown(): void {
+		foreach ( $this->test_attachment_ids as $attachment_id ) {
+			wp_delete_attachment( $attachment_id, true );
+		}
+		foreach ( $this->test_media_directories as $directory ) {
+			foreach ( glob( trailingslashit( $directory ) . '*.jio.*' ) ?: array() as $derivative ) {
+				if ( is_file( $derivative ) && ! is_link( $derivative ) ) {
+					unlink( $derivative );
+				}
+			}
+			if ( is_dir( $directory ) && ! is_link( $directory ) ) {
+				rmdir( $directory );
+			}
+		}
+		global $wpdb;
+		$wpdb->query( 'DELETE FROM ' . QueueSchema::jobs_table() );
+		$wpdb->query( 'UPDATE ' . QueueSchema::slots_table() . ' SET lock_token = NULL, locked_at = NULL' );
+		wp_clear_scheduled_hook( QueueWorker::CRON_HOOK );
+		wp_clear_scheduled_hook( BulkScanner::CRON_HOOK );
+		delete_option( BulkScanner::STATE );
+		QueueState::resume();
 		deactivate_plugins( self::PLUGIN );
 		delete_option( Plugin::OPTION_NAME );
 		wp_set_current_user( 0 );
@@ -70,6 +115,16 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 			realpath( ( new ReflectionClass( Plugin::class ) )->getFileName() )
 		);
 		$this->assertSame( Settings::defaults(), get_option( Plugin::OPTION_NAME ) );
+		$this->jobs->enqueue_many(
+			array(
+				array(
+					'attachment_id'      => 999999,
+					'variant_key'        => 'full',
+					'output_format'      => 'source',
+					'source_fingerprint' => str_repeat( 'a', 64 ),
+				),
+			)
+		);
 		update_option(
 			Plugin::OPTION_NAME,
 			array(
@@ -78,6 +133,7 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 			)
 		);
 		deactivate_plugins( self::PLUGIN );
+		$this->assertSame( 1, $this->jobs->pending_count(), 'deactivation leaves persistent queue jobs intact' );
 		$this->assertNotWPError( activate_plugin( self::PLUGIN, '', false, true ) );
 
 		$this->assertSame( 'webp', get_option( Plugin::OPTION_NAME )['output_format'] );
@@ -87,6 +143,22 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 		deactivate_plugins( self::PLUGIN );
 		$this->assertSame( 'webp', get_option( Plugin::OPTION_NAME )['output_format'] );
 		$this->assertSame( self::$media_fixture_hash, hash_file( 'sha256', self::$media_fixture ) );
+	}
+
+	public function test_media_row_action_and_queue_controls_require_administrator_capability(): void {
+		[ $attachment_id ] = $this->create_png_attachment( 'permissions', false );
+		$integration       = new MediaIntegration( $this->jobs, new QueueWorker( $this->jobs ) );
+		$administrator     = self::factory()->user->create( array( 'role' => 'administrator' ) );
+		wp_set_current_user( $administrator );
+		$actions = $integration->attachment_row_action( array(), get_post( $attachment_id ) );
+		$this->assertArrayHasKey( 'jio_optimize', $actions );
+		$this->assertStringContainsString( '_wpnonce=', $actions['jio_optimize'] );
+		$subscriber = self::factory()->user->create( array( 'role' => 'subscriber' ) );
+		wp_set_current_user( $subscriber );
+		$this->assertSame( array(), $integration->attachment_row_action( array(), get_post( $attachment_id ) ) );
+		$_POST['queue_action'] = 'cancel';
+		$this->expectException( WPDieException::class );
+		( new AdminPages( new CapabilityDetector(), $this->jobs, new BulkScanner( $this->jobs, new QueueWorker( $this->jobs ) ), new QueueWorker( $this->jobs ) ) )->handle_queue_action();
 	}
 
 	public function test_admin_menu_settings_nonce_and_authorized_page_rendering(): void {
@@ -113,7 +185,7 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 		$this->boot_admin_as( 'subscriber' );
 		$this->assertFalse( current_user_can( 'manage_options' ) );
 		$this->expectException( WPDieException::class );
-		(new AdminPages( new CapabilityDetector() ))->render_settings();
+		( new AdminPages( new CapabilityDetector() ) )->render_settings();
 	}
 
 	public function test_registered_settings_sanitize_persist_and_reject_xss(): void {
@@ -133,7 +205,7 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 		$this->assertFalse( $saved['auto_optimize'] );
 
 		ob_start();
-		(new AdminPages( new CapabilityDetector() ))->render_settings();
+		( new AdminPages( new CapabilityDetector() ) )->render_settings();
 		$page = (string) ob_get_clean();
 		$this->assertStringNotContainsString( '<script>', $page );
 		$this->assertStringNotContainsString( 'alert(1)', $page );
@@ -157,7 +229,7 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 
 			$this->boot_admin_as( 'administrator' );
 			ob_start();
-			(new AdminPages( new CapabilityDetector() ))->render_dashboard();
+			( new AdminPages( new CapabilityDetector() ) )->render_dashboard();
 			$page = (string) ob_get_clean();
 			$this->assertStringContainsString( '&lt;img src=x onerror=alert(1)&gt;', $page );
 			$this->assertStringNotContainsString( '<img src=x onerror=alert(1)>', $page );
@@ -208,13 +280,220 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 		$archive->close();
 	}
 
+	public function test_individual_attachment_and_thumbnail_create_real_inactive_derivatives(): void {
+		$this->set_output_format( 'webp' );
+		[ $attachment_id, $source, $metadata ] = $this->create_png_attachment( 'single', true );
+		$source_hash                           = hash_file( 'sha256', $source );
+		$attached                              = get_post_meta( $attachment_id, '_wp_attached_file', true );
+		$integration                           = new MediaIntegration( $this->jobs, new QueueWorker( $this->jobs ) );
+		$this->assertSame( 2, $integration->enqueue_attachment( $attachment_id ) );
+		$this->assertSame( 0, $integration->enqueue_attachment( $attachment_id ), 'duplicate requests reuse the fingerprinted queue jobs' );
+		$worker = new QueueWorker( $this->jobs );
+		$counts = $worker->run_batch( 10 );
+		$this->assertSame( 2, $counts['completed'] );
+		$this->assertSame( $source_hash, hash_file( 'sha256', $source ) );
+		$this->assertSame( $attached, get_post_meta( $attachment_id, '_wp_attached_file', true ) );
+		$this->assertSame( $metadata, wp_get_attachment_metadata( $attachment_id ), 'WordPress thumbnail metadata remains unchanged' );
+		$this->assertFileExists( preg_replace( '/\.png$/', '.jio.webp', $source ) );
+		$this->assertFileExists( preg_replace( '/\.png$/', '.jio.webp', dirname( $source ) . '/single-thumbnail.png' ) );
+		$records = array_filter( get_post_meta( $attachment_id ), static fn ( $key ): bool => str_starts_with( (string) $key, '_jio_derivative_' ), ARRAY_FILTER_USE_KEY );
+		$this->assertCount( 2, $records );
+		foreach ( $records as $record ) {
+			$this->assertSame( 'image/webp', $record[0]['mime_type'] );
+			$this->assertStringNotContainsString( ABSPATH, $record[0]['derivative_relative_path'] );
+		}
+		$this->assertSame( 2, $this->jobs->stats()['completed'] );
+		$user_id = self::factory()->user->create( array( 'role' => 'administrator' ) );
+		wp_set_current_user( $user_id );
+		ob_start();
+		( new AdminPages( new CapabilityDetector(), $this->jobs, new BulkScanner( $this->jobs, $worker ), $worker ) )->render_dashboard();
+		$dashboard = (string) ob_get_clean();
+		$this->assertStringContainsString( 'Attachments processed', $dashboard );
+		$this->assertStringContainsString( 'Measured derivative byte delta', $dashboard );
+		$this->assertStringNotContainsString( $source, $dashboard );
+	}
+
+	public function test_automatic_queueing_is_off_by_default_and_deduplicates_after_metadata_generation(): void {
+		[ $attachment_id, , $metadata ] = $this->create_png_attachment( 'automatic', true );
+		$this->assertSame( $metadata, apply_filters( 'wp_generate_attachment_metadata', $metadata, $attachment_id, 'create' ) );
+		$this->assertSame( 0, $this->jobs->pending_count() );
+		$this->set_output_format( 'webp', true );
+		$this->assertSame( $metadata, apply_filters( 'wp_generate_attachment_metadata', $metadata, $attachment_id, 'create' ) );
+		$this->assertSame( 2, $this->jobs->pending_count() );
+		apply_filters( 'wp_generate_attachment_metadata', $metadata, $attachment_id, 'update' );
+		$this->assertSame( 2, $this->jobs->pending_count() );
+	}
+
+	public function test_database_claim_retry_stale_recovery_pause_and_cancellation(): void {
+		$this->set_output_format( 'webp' );
+		[ $attachment_id ] = $this->create_png_attachment( 'queue', false );
+		$factory           = new AttachmentJobFactory();
+		$this->assertSame( 1, $this->jobs->enqueue_many( $factory->jobs_for_attachment( $attachment_id ) ) );
+		$claim_token = bin2hex( random_bytes( 16 ) );
+		$job         = $this->jobs->claim_next( $claim_token );
+		$this->assertIsArray( $job );
+		$this->assertFalse( $this->jobs->finish( (int) $job['id'], 'wrong-owner-token', 'completed', 1, 1 ) );
+		$this->assertTrue( $this->jobs->fail( (int) $job['id'], $claim_token, 'test_failure' ) );
+		global $wpdb;
+		$table = QueueSchema::jobs_table();
+		for ( $attempt = 2; $attempt <= 3; ++$attempt ) {
+			$wpdb->query( $wpdb->prepare( "UPDATE {$table} SET available_at = DATE_SUB(UTC_TIMESTAMP(), INTERVAL 1 SECOND) WHERE id = %d", (int) $job['id'] ) );
+			$retry_token = bin2hex( random_bytes( 16 ) );
+			$claim       = $this->jobs->claim_next( $retry_token );
+			$this->assertIsArray( $claim );
+			$this->assertSame( $attempt, (int) $claim['attempts'] );
+			$this->assertTrue( $this->jobs->fail( (int) $job['id'], $retry_token, 'test_failure' ) );
+		}
+		$this->assertSame( 1, $this->jobs->stats()['failed'] );
+		$this->assertSame( 1, $this->jobs->retry_failed() );
+		$wpdb->query( $wpdb->prepare( "UPDATE {$table} SET available_at = DATE_SUB(UTC_TIMESTAMP(), INTERVAL 1 SECOND) WHERE id = %d", (int) $job['id'] ) );
+		$stale_token = bin2hex( random_bytes( 16 ) );
+		$stale       = $this->jobs->claim_next( $stale_token );
+		$this->assertIsArray( $stale );
+		$wpdb->query( $wpdb->prepare( "UPDATE {$table} SET locked_at = DATE_SUB(UTC_TIMESTAMP(), INTERVAL 601 SECOND) WHERE id = %d", (int) $job['id'] ) );
+		$this->jobs->recover_stale();
+		$this->assertSame( 'pending', $wpdb->get_var( $wpdb->prepare( "SELECT status FROM {$table} WHERE id = %d", (int) $job['id'] ) ) );
+		QueueState::pause();
+		$this->assertSame( 0, ( new QueueWorker( $this->jobs ) )->run_batch( 1 )['claimed'] );
+		QueueState::resume();
+		$this->assertSame( 1, $this->jobs->cancel_pending() );
+		$this->assertSame( 0, $this->jobs->pending_count() );
+	}
+
+	public function test_concurrent_claims_are_distinct_and_require_their_own_worker_tokens(): void {
+		$this->set_output_format( 'webp' );
+		[ $first_id ]  = $this->create_png_attachment( 'claim-one', false );
+		[ $second_id ] = $this->create_png_attachment( 'claim-two', false );
+		$factory       = new AttachmentJobFactory();
+		$this->jobs->enqueue_many( $factory->jobs_for_attachment( $first_id ) );
+		$this->jobs->enqueue_many( $factory->jobs_for_attachment( $second_id ) );
+		$first_token  = bin2hex( random_bytes( 16 ) );
+		$second_token = bin2hex( random_bytes( 16 ) );
+		$first        = $this->jobs->claim_next( $first_token );
+		$second       = $this->jobs->claim_next( $second_token );
+		$this->assertIsArray( $first );
+		$this->assertIsArray( $second );
+		$this->assertNotSame( $first['id'], $second['id'] );
+		$this->assertFalse( $this->jobs->finish( (int) $first['id'], $second_token, 'completed', 1, 1 ) );
+		$this->assertTrue( $this->jobs->finish( (int) $first['id'], $first_token, 'completed', 1, 1 ) );
+		$this->assertTrue( $this->jobs->finish( (int) $second['id'], $second_token, 'completed', 1, 1 ) );
+	}
+
+	public function test_bulk_scan_uses_bounded_keyset_pages_and_persists_progress(): void {
+		$this->set_output_format( 'webp' );
+		for ( $index = 0; $index < BulkScanner::BATCH + 1; ++$index ) {
+			$this->create_png_attachment( 'bulk-' . $index, false );
+		}
+		$worker  = new QueueWorker( $this->jobs );
+		$scanner = new BulkScanner( $this->jobs, $worker );
+		$this->assertTrue( $scanner->start() );
+		$this->assertSame( BulkScanner::BATCH, $scanner->scan_batch() );
+		$this->assertSame( BulkScanner::BATCH, $this->jobs->pending_count() );
+		$this->assertSame( 1, $scanner->scan_batch() );
+		$this->assertSame( 0, $scanner->scan_batch() );
+		$state = $scanner->state();
+		$this->assertSame( 'complete', $state['status'] );
+		$this->assertSame( BulkScanner::BATCH + 1, $state['scanned'] );
+		$this->assertSame( BulkScanner::BATCH + 1, $state['jobs_added'] );
+	}
+
+	public function test_unsupported_and_missing_media_are_safely_skipped(): void {
+		$this->set_output_format( 'webp' );
+		$pdf_id = wp_insert_attachment(
+			array(
+				'post_mime_type' => 'application/pdf',
+				'post_title'     => 'Unsupported document',
+			)
+		);
+		$this->assertIsInt( $pdf_id );
+		$this->assertSame( array(), ( new AttachmentTargetProvider() )->targets( $pdf_id ) );
+		$this->assertSame( array(), ( new AttachmentTargetProvider() )->targets( 999999999 ) );
+		[ $attachment_id, $source ] = $this->create_png_attachment( 'missing', false );
+		$this->assertSame( 1, $this->jobs->enqueue_many( ( new AttachmentJobFactory() )->jobs_for_attachment( $attachment_id ) ) );
+		unlink( $source );
+		[ $deleted_id ] = $this->create_png_attachment( 'deleted', false );
+		$this->assertSame( 1, $this->jobs->enqueue_many( ( new AttachmentJobFactory() )->jobs_for_attachment( $deleted_id ) ) );
+		wp_delete_attachment( $deleted_id, true );
+		$counts = ( new QueueWorker( $this->jobs ) )->run_batch( 2 );
+		$this->assertSame( 2, $counts['skipped'] );
+		$this->assertSame( 0, $this->jobs->stats()['failed'] );
+		$this->test_attachment_ids[] = $pdf_id;
+	}
+
 	private function boot_admin_as( string $role ): void {
 		$user_id = self::factory()->user->create( array( 'role' => $role ) );
 		wp_set_current_user( $user_id );
 		set_current_screen( 'dashboard' );
-		(new Plugin())->boot();
+		( new Plugin() )->boot();
 		do_action( 'admin_init' );
 		do_action( 'admin_menu' );
+	}
+
+	/** Creates an isolated real attachment fixture with optional registered thumbnail metadata.
+	 *
+	 * @param string $name       Safe fixture name.
+	 * @param bool   $with_thumb Whether to create a thumbnail variant.
+	 * @return array{int,string,array<string,mixed>} Attachment ID, source path, and persisted metadata.
+	 */
+	private function create_png_attachment( string $name, bool $with_thumb ): array {
+		$uploads   = wp_upload_dir();
+		$directory = trailingslashit( $uploads['basedir'] ) . 'jio-m4-' . sanitize_file_name( $name ) . '-' . bin2hex( random_bytes( 4 ) );
+		wp_mkdir_p( $directory );
+		$this->test_media_directories[] = $directory;
+		$source                         = trailingslashit( $directory ) . sanitize_file_name( $name ) . '.png';
+		$data                           = base64_decode( 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADUlEQVQIHWP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC', true );
+		file_put_contents( $source, $data );
+		$attachment_id = wp_insert_attachment(
+			array(
+				'post_mime_type' => 'image/png',
+				'post_title'     => 'JIO M4 ' . $name,
+				'post_status'    => 'inherit',
+			),
+			$source,
+			0,
+			true
+		);
+		$this->assertIsInt( $attachment_id );
+		$this->test_attachment_ids[] = $attachment_id;
+		$metadata                    = array(
+			'file'       => ltrim( str_replace( wp_normalize_path( $uploads['basedir'] ) . '/', '', wp_normalize_path( $source ) ), '/' ),
+			'width'      => 1,
+			'height'     => 1,
+			'sizes'      => array(),
+			'image_meta' => array(),
+		);
+		if ( $with_thumb ) {
+			$thumbnail = trailingslashit( $directory ) . sanitize_file_name( $name ) . '-thumbnail.png';
+			copy( $source, $thumbnail );
+			$metadata['sizes']['medium'] = array(
+				'file'      => basename( $thumbnail ),
+				'width'     => 1,
+				'height'    => 1,
+				'mime-type' => 'image/png',
+			);
+		}
+		wp_update_attachment_metadata( $attachment_id, $metadata );
+		return array( $attachment_id, $source, wp_get_attachment_metadata( $attachment_id ) );
+	}
+
+	/** Selects a sanitized derivative target for integration tests.
+	 *
+	 * @param string $format     Allowed settings format.
+	 * @param bool   $auto_queue Whether automatic upload queueing is enabled.
+	 */
+	private function set_output_format( string $format, bool $auto_queue = false ): void {
+		update_option(
+			Plugin::OPTION_NAME,
+			Settings::sanitize(
+				array(
+					'output_format'   => $format,
+					'image_quality'   => 80,
+					'minimum_quality' => 60,
+					'auto_optimize'   => $auto_queue,
+					'concurrency'     => 1,
+				)
+			)
+		);
 	}
 
 	private function submenu_capability( array $submenu_items, string $slug ): ?string {
