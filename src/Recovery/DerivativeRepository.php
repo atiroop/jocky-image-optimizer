@@ -68,7 +68,7 @@ final class DerivativeRepository {
 		return (array) $wpdb->get_results( $wpdb->prepare( "SELECT * FROM {$table} WHERE attachment_id = %d AND id > %d ORDER BY id ASC LIMIT %d", $attachment_id, max( 0, $after_id ), max( 1, min( 10, $limit ) ) ), ARRAY_A );
 	}
 
-	/** Lists a bounded page of active attachment derivatives for cleanup.
+	/** Lists a bounded page of candidate, conflicted, or interrupted attachment derivatives for cleanup reinspection.
 	 *
 	 * @param int $attachment_id Attachment ID.
 	 * @param int $limit Maximum rows, capped at ten.
@@ -77,19 +77,19 @@ final class DerivativeRepository {
 	public function active_for_attachment( int $attachment_id, int $limit = 10, int $after_id = 0 ): array {
 		global $wpdb;
 		$table = QueueSchema::derivatives_table();
-		return (array) $wpdb->get_results( $wpdb->prepare( "SELECT * FROM {$table} WHERE attachment_id = %d AND lifecycle_status = 'active' AND id > %d ORDER BY id ASC LIMIT %d", $attachment_id, max( 0, $after_id ), max( 1, min( 10, $limit ) ) ), ARRAY_A );
+		return (array) $wpdb->get_results( $wpdb->prepare( "SELECT * FROM {$table} WHERE attachment_id = %d AND lifecycle_status IN ('active','conflict','removing') AND id > %d ORDER BY id ASC LIMIT %d", $attachment_id, max( 0, $after_id ), max( 1, min( 10, $limit ) ) ), ARRAY_A );
 	}
 
 	/** Counts records after an attachment-specific cursor without loading them.
 	 *
 	 * @param int  $attachment_id Attachment ID.
 	 * @param int  $after_id Last record ID.
-	 * @param bool $active_only Whether only active rows count.
+	 * @param bool $active_only Whether only non-cleaned cleanup candidates count.
 	 */
 	public function count_attachment_after( int $attachment_id, int $after_id, bool $active_only = false ): int {
 		global $wpdb;
 		$table  = QueueSchema::derivatives_table();
-		$filter = $active_only ? " AND lifecycle_status = 'active'" : '';
+		$filter = $active_only ? " AND lifecycle_status IN ('active','conflict','removing')" : '';
 		return (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$table} WHERE attachment_id = %d AND id > %d{$filter}", $attachment_id, max( 0, $after_id ) ) );
 	}
 

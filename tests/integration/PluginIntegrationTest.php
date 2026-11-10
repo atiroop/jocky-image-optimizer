@@ -412,6 +412,7 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 	}
 
 	public function test_recovery_verifies_corruption_and_cleans_only_registered_derivatives(): void {
+		global $wpdb;
 		$this->set_output_format( 'webp' );
 		[ $attachment_id, $source, $metadata ] = $this->create_png_attachment( 'recovery-safe', true );
 		$source_hash                           = hash_file( 'sha256', $source );
@@ -420,12 +421,13 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 		$this->assertSame( 2, $this->jobs->enqueue_many( ( new AttachmentJobFactory() )->jobs_for_attachment( $attachment_id ) ) );
 		$counts = ( new QueueWorker( $this->jobs ) )->run_batch( 2 );
 		$this->assertSame( 2, $counts['completed'] );
+		$this->jobs->stats();
+		$this->assertSame( '', $wpdb->last_error, 'signed savings aggregation accepts output larger than source' );
 
 		$service  = new RecoveryService();
 		$verified = $service->verify_attachment( $attachment_id );
 		$this->assertSame( 'valid', $verified['status'] );
 		$this->assertCount( 2, $verified['records'] );
-		global $wpdb;
 		$registry = QueueSchema::derivatives_table();
 		$owned    = (array) $wpdb->get_results( $wpdb->prepare( "SELECT * FROM {$registry} WHERE attachment_id = %d", $attachment_id ), ARRAY_A );
 		$this->assertCount( 2, $owned );

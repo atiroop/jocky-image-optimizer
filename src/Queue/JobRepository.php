@@ -244,7 +244,7 @@ final class JobRepository {
 		}
 		$stats['completed_attachments'] = (int) $wpdb->get_var( "SELECT COUNT(DISTINCT attachment_id) FROM {$table} WHERE status IN ('completed','skipped')" );
 		$stats['bytes_saved']           = (int) $wpdb->get_var( "SELECT COALESCE(SUM(bytes_saved),0) FROM {$table} WHERE status = 'completed'" );
-		$stats['average_savings']       = (float) $wpdb->get_var( "SELECT COALESCE(AVG((input_bytes-output_bytes)/input_bytes*100),0) FROM {$table} WHERE status = 'completed' AND input_bytes > 0" );
+		$stats['average_savings']       = (float) $wpdb->get_var( "SELECT COALESCE(AVG((CAST(input_bytes AS SIGNED)-CAST(output_bytes AS SIGNED))/input_bytes*100),0) FROM {$table} WHERE status = 'completed' AND input_bytes > 0" );
 		return $stats;
 	}
 
