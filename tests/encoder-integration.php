@@ -150,6 +150,16 @@ try {
 		$before = hash_file( 'sha256', $source );
 		$request = new OptimizationRequest( $source, $output, $encoder, $mode, 78, 60, false, 52428800, 40000000, 180000, $format, true, 6 );
 		$result = $manager->optimize( $request );
+		if ( 'failed' === $result->status && 'invalid_image' === $result->error_category ) {
+			$debug_output = $root . DIRECTORY_SEPARATOR . 'validator-debug.' . $extension;
+			$binary = $binaries->locate( $encoder );
+			$runner->run( (string) $binary, array( '-quiet', '-m', '4', '-q', '78', $source, '-o', $debug_output ), 30 );
+			try {
+				$validator->inspect( $debug_output, $request );
+			} catch ( Throwable $exception ) {
+				fwrite( STDERR, 'Validator detail: ' . $exception->getMessage() . "\n" );
+			}
+		}
 		$assert( 'optimized' === $result->status && null !== $result->output_bytes && is_file( $output ), sprintf( '%s to %s conversion produces a measured output (status: %s; error: %s)', mime_content_type( $source ), $format, $result->status, $result->error_category ?? 'none' ) );
 		$assert( $before === hash_file( 'sha256', $source ), 'source bytes remain unchanged after conversion' );
 		$info = $validator->inspect( $output, $request );
