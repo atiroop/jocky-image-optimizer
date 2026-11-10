@@ -1,5 +1,12 @@
 # Changelog
 
+## Milestone 3 — WebP and AVIF conversion (in progress)
+
+- Added explicit cwebp and avifenc adapters for JPEG/PNG input, lossy/lossless modes, encoder-specific quality, bounded AVIF speed/thread settings, and optional retention of larger valid derivatives.
+- Added WebP RIFF and AVIF ISO-BMFF structural validation, dimension checks, transparency detection, animation rejection, independent decoder integration coverage, and fixed-fixture benchmark reporting.
+- Conversion requires explicit metadata opt-out; detected metadata is rejected when preservation is requested because color-profile and orientation fidelity are not guaranteed. No WordPress media integration was added.
+- CI and local validation results are pending; see `VALIDATION.md` after the feature workflow runs.
+
 ## Milestone 2 — 2026-11-10
 
 - Added an explicit local JPEG/PNG optimization API with lossless jpegtran/oxipng and lossy MozJPEG/pngquant adapters.

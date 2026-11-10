@@ -9,8 +9,9 @@
 - `src/CapabilityDetector.php`: checks loaded PHP libraries and their format support, and searches PATH for known encoder executables without invoking them.
 - `src/Optimization/OptimizationManager.php`: explicit-only orchestration for JPEG/PNG inputs, bounded validation, separate outputs, no-benefit handling, and measured results.
 - `src/Optimization/*Encoder.php`: lossless `jpegtran`/`oxipng` and lossy MozJPEG/`pngquant` command adapters. Binary resolution accepts only known IDs and trusted configured paths.
+- `src/Optimization/CwebpEncoder.php` and `AvifEncoder.php`: explicit JPEG/PNG-to-still-WebP/AVIF conversion using bounded argv execution, configurable quality/mode, and separate outputs. AVIF uses at most two threads and configurable speed.
 - `src/System/ProcessRunner.php`: argv-array process execution with shell bypass, bounded output capture, timeout, and a restricted inherited environment. Windows uses private temporary capture files because process pipes can block despite nonblocking mode; Linux uses drained pipes.
-- `src/Optimization/ImageValidator.php`: bounded streaming PNG chunk/order/CRC validation, JPEG marker/dimension validation, and APNG detection.
+- `src/Optimization/ImageValidator.php`: bounded streaming PNG chunk/order/CRC validation, JPEG marker/dimension validation, RIFF WebP chunk/dimension/alpha validation, bounded ISO-BMFF AVIF box/dimension checks, and animation detection.
 - `scripts/package.php`: creates a WordPress-installable ZIP with a `jocky-image-optimizer/` root and includes Composer's production autoloader.
 - `tests/integration/PluginIntegrationTest.php`: exercises the packaged plugin against the WordPress PHPUnit runtime, including lifecycle, admin pages, settings, diagnostics, and media fixture preservation.
 - `bin/install-wp-tests.sh`: pinned WP-CLI scaffold installer for an isolated WordPress core and test library; it must use a disposable database and temporary paths.
@@ -27,7 +28,7 @@ The current orchestration and adapters intentionally remain separate from WordPr
 
 ## Deployment notes
 
-The PHP process must have access to the target uploads filesystem and required libraries. Linux binary paths, executable permissions, PHP-FPM PATH, memory limits, and process restrictions can differ from CLI and from Windows. Verify diagnostics as the actual web/PHP-FPM user. Do not auto-install system packages or auto-configure cron.
+Cross-format conversion requires `cwebp` or `avifenc` on the PHP process PATH (not required for activation). AVIF defaults to speed 6 and at most two threads; lossy AVIF keeps alpha at lossless quality. The request accepts quality 1–100 and passes it to cwebp quality. The adapter detects libavif version and uses `--qcolor`/`--qalpha` on 1.2+, or maps to `--min`/`--max` quantizers and lossless alpha on earlier releases. Encoder quality scales are not directly comparable. Conversion rejects EXIF-bearing sources because orientation cannot be guaranteed. Other detected metadata requires opt-out and may be stripped. Output dimension/format/alpha checks are structural; runtime does not compare rendered pixels or exact color appearance. Independent decoding is part of the encoder integration test, not a runtime dependency. Animated formats are rejected. The PHP process must have access to the target uploads filesystem and required libraries. Linux binary paths, executable permissions, PHP-FPM PATH, memory limits, and process restrictions can differ from CLI and from Windows. Verify diagnostics as the actual web/PHP-FPM user. Do not auto-install system packages or auto-configure cron.
 
 ## Integration testing
 

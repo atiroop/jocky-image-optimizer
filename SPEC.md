@@ -7,7 +7,7 @@ Provide a self-hosted WordPress image optimization plugin that processes media l
 ## Requirements
 
 - Optimize JPEG and PNG locally using available encoders; support lossy/lossless modes where the chosen encoder permits.
-- Generate WebP and AVIF derivatives when available.
+- Generate still WebP and AVIF derivatives explicitly when the selected local encoder is available; conversion never alters the source.
 - Preserve originals, attachment IDs, attachment metadata, URLs, thumbnail sizes, and functional `srcset` behavior.
 - Support automatic upload processing, resumable bulk work, bounded concurrency (default one worker), retry limits, and WP-CLI.
 - Provide settings, dashboard statistics, job failures, and accurate runtime diagnostics.
@@ -21,7 +21,7 @@ Establish plugin metadata/bootstrap, Composer PSR-4 loading, activation/deactiva
 
 ## Explicitly deferred
 
-Encoder adapters and image processing, WebP/AVIF delivery, upload hooks, queues and bulk actions, originals backup/restoration, storage adapters, R2 integration, and production hardening beyond the foundation requirements.
+Automatic WebP/AVIF delivery, upload hooks, queues and bulk actions, originals backup/restoration, storage adapters, R2 integration, and production hardening beyond the foundation requirements.
 
 ## Compatibility targets
 

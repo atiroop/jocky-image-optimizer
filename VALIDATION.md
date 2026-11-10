@@ -1,5 +1,25 @@
 # Milestone 1.5 Validation
 
+## Milestone 3 implementation status — 2026-11-10
+
+Milestone 3 work is on `feature/milestone-3-webp-avif`. Results in this section distinguish checks already run locally from the real-encoder and WordPress CI jobs that must run after the feature branch is pushed.
+
+| Check | Result | Evidence / limitation |
+|---|---|---|
+| Foundation and branch | Passed | Started from clean local `main` and `origin/main` at Milestone 2 merge `bb27295515bac0b90f8f598ba27aac9214987a73`; created the requested feature branch. |
+| PHP runtime | Partial | Local PHP 8.5.0; PHP 8.3 is configured in CI and unavailable locally. |
+| WPCS | Passed locally after line-ending normalization | `composer lint --no-interaction` passed for the production source after temporarily normalizing PHP working files to LF for PHPCS. The checkout's Windows `core.autocrlf=true` mode presents CRLF and causes line-ending-only PHPCS failures on untouched files. Changed production files also pass direct PHPCS checks. Linux CI remains the canonical check. |
+| Standalone tests | Passed locally | `composer test --no-interaction` passed all 30 existing assertions. |
+| Composer validation/audit | Passed locally | `composer validate --no-check-publish` is valid and `composer audit --locked` reports no advisories. |
+| Workflow YAML | Passed locally | `actionlint .github/workflows/ci.yml` passed. |
+| PHP syntax | Passed locally | PHP 8.5.0 `php -l` passed for 33 PHP files, excluding `vendor/` and generated `build/` output. PHP 8.3 remains a CI check. |
+| Real WebP/AVIF conversion | Not run locally | `cwebp`, `avifenc`, `dwebp`, and `avifdec` are absent from this Windows workspace. No encoder packages were installed locally. CI installs trusted Ubuntu packages and runs actual conversions plus independent decoder checks. |
+| Production ZIP | Passed locally | After `composer install --no-dev`, `php scripts/package.php` and `composer test:package` passed; development dependencies were restored afterward. |
+| WordPress integration | Pending | Must be verified by the feature branch workflow; no local Docker/WordPress database is available. |
+| Benchmark | Pending | The real encoder integration script emits measured input/output bytes and elapsed milliseconds for each fixture conversion. No measurements are available until the CI encoder job runs. |
+
+Known Milestone 3 limits: conversion is explicit only and writes a separate derivative. EXIF-bearing sources are always rejected because orientation cannot be guaranteed. Other metadata-bearing sources are rejected while `preserve_metadata` is true; callers can explicitly opt out, and those profiles/metadata may be stripped. Runtime AVIF checks validate bounded ISO-BMFF boxes and primary dimensions, and WebP checks the RIFF/chunk structure and dimensions; independent decoder acceptance is exercised in CI. These checks do not prove visual equivalence. Animated formats are unsupported. CI pins Ubuntu 24.04 WebP 1.3.2 and libavif 1.0.4 package versions to exercise the older AVIF quantizer CLI; package versions are trusted Ubuntu packages, though exact versions may disappear from the active repository in the future.
+
 ## Milestone 2 implementation check — 2026-11-10
 
 Milestone 2 processing code has been added on `feature/milestone-2-image-engine`; this is an implementation status report, not a production-readiness claim.

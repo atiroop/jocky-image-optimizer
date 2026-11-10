@@ -19,6 +19,10 @@ final class BinaryLocator {
 		'jpegtran' => array( 'jpegtran' ),
 		'pngquant' => array( 'pngquant' ),
 		'oxipng'   => array( 'oxipng' ),
+		'cwebp'    => array( 'cwebp' ),
+		'avifenc'  => array( 'avifenc' ),
+		'dwebp'    => array( 'dwebp' ),
+		'avifdec'  => array( 'avifdec' ),
 	);
 
 	/** Paths explicitly configured by an administrator or deployer.

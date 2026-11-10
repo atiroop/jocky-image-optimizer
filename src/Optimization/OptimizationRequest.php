@@ -16,6 +16,9 @@ final class OptimizationRequest {
 
 	public const MODE_LOSSY    = 'lossy';
 	public const MODE_LOSSLESS = 'lossless';
+	public const OUTPUT_SOURCE = 'source';
+	public const OUTPUT_WEBP   = 'image/webp';
+	public const OUTPUT_AVIF   = 'image/avif';
 
 	/** Creates a validated optimization request.
 	 *
@@ -23,12 +26,15 @@ final class OptimizationRequest {
 	 * @param string $destination_path     Separate output path.
 	 * @param string $encoder_id           Registered encoder identifier.
 	 * @param string $mode                 Lossy or lossless processing mode.
-	 * @param int    $quality              Encoder-specific quality value.
+	 * @param int    $quality              Encoder-specific quality value from 1 to 100.
 	 * @param int    $minimum_quality      Minimum acceptable lossy quality.
 	 * @param bool   $preserve_metadata    Whether metadata retention is required.
 	 * @param int    $maximum_input_bytes  Maximum input size.
 	 * @param int    $maximum_pixels       Maximum pixel count.
 	 * @param int    $timeout_milliseconds Maximum process duration.
+	 * @param string $output_format        Source, WebP, or AVIF output MIME type.
+	 * @param bool   $allow_larger_output  Whether valid larger derivatives may be retained.
+	 * @param int    $encoding_speed       AVIF speed from 0 (slowest) to 10 (fastest).
 	 * @throws InvalidArgumentException When values are outside supported ranges.
 	 */
 	public function __construct(
@@ -41,7 +47,10 @@ final class OptimizationRequest {
 		public readonly bool $preserve_metadata = true,
 		public readonly int $maximum_input_bytes = 52428800,
 		public readonly int $maximum_pixels = 40000000,
-		public readonly int $timeout_milliseconds = 120000
+		public readonly int $timeout_milliseconds = 120000,
+		public readonly string $output_format = self::OUTPUT_SOURCE,
+		public readonly bool $allow_larger_output = false,
+		public readonly int $encoding_speed = 6
 	) {
 		if ( '' === $source_path || '' === $destination_path || '' === $encoder_id ) {
 			throw new InvalidArgumentException( 'Source, destination, and encoder are required.' );
@@ -54,6 +63,9 @@ final class OptimizationRequest {
 		}
 		if ( $maximum_input_bytes < 1 || $maximum_pixels < 1 || $timeout_milliseconds < 1 || $timeout_milliseconds > 600000 ) {
 			throw new InvalidArgumentException( 'Resource limits are outside the supported range.' );
+		}
+		if ( ! in_array( $output_format, array( self::OUTPUT_SOURCE, self::OUTPUT_WEBP, self::OUTPUT_AVIF ), true ) || $encoding_speed < 0 || $encoding_speed > 10 ) {
+			throw new InvalidArgumentException( 'Output format or encoding speed is unsupported.' );
 		}
 	}
 }

@@ -1,6 +1,6 @@
 <?php
 /**
- * Bounded JPEG and PNG validation.
+ * Bounded JPEG, PNG, WebP, and AVIF validation.
  *
  * @package Jocky\ImageOptimizer\Optimization
  */
@@ -33,26 +33,161 @@ final class ImageValidator {
 			throw new OptimizationException( 'invalid_image', 'The image header could not be read.' );
 		}
 		if ( str_starts_with( $header, "\x89PNG\r\n\x1a\n" ) ) {
-			[ $width, $height, $metadata, $animated ] = $this->inspect_png( $path, $bytes );
-			$mime                                     = 'image/png';
+			[ $width, $height, $metadata, $animated, $alpha ] = $this->inspect_png( $path, $bytes );
+			$mime = 'image/png';
 		} elseif ( str_starts_with( $header, "\xff\xd8" ) ) {
 			[ $width, $height, $metadata ] = $this->inspect_jpeg( $path, $bytes );
 			$animated                      = false;
 			$mime                          = 'image/jpeg';
+			$alpha                         = false;
+		} elseif ( str_starts_with( $header, 'RIFF' ) && 'WEBP' === substr( $header, 8, 4 ) ) {
+			[ $width, $height, $alpha, $animated ] = $this->inspect_webp( $path, $bytes );
+			$metadata                              = array();
+			$mime                                  = 'image/webp';
+		} elseif ( str_contains( substr( $header, 4, 24 ), 'ftypavif' ) || str_contains( substr( $header, 4, 24 ), 'ftypmif1' ) ) {
+			[ $width, $height, $animated, $alpha ] = $this->inspect_avif( $path, $bytes );
+			$metadata                              = array();
+			$mime                                  = 'image/avif';
 		} else {
-			throw new OptimizationException( 'unsupported_format', 'Only structurally valid JPEG and PNG images are supported.' );
+			throw new OptimizationException( 'unsupported_format', 'The input is not a supported JPEG, PNG, WebP, or AVIF image.' );
 		}
 		if ( $width < 1 || $height < 1 || $width > intdiv( $request->maximum_pixels, $height ) ) {
 			throw new OptimizationException( 'pixel_limit', 'The image dimensions are invalid or exceed the pixel limit.' );
 		}
-		return new ImageInfo( $mime, $width, $height, $bytes, $metadata, $animated );
+		return new ImageInfo( $mime, $width, $height, $bytes, $metadata, $animated, $alpha );
+	}
+
+	/** Validates the RIFF container and still-image WebP dimensions.
+	 *
+	 * @param string $path  Image path.
+	 * @param int    $bytes Measured file size.
+	 * @return array{int, int, bool, bool} Dimensions, alpha presence, and animation flag.
+	 * @throws OptimizationException When the container is invalid.
+	 */
+	private function inspect_webp( string $path, int $bytes ): array {
+		if ( $bytes < 20 || $bytes > 4294967304 ) {
+			throw new OptimizationException( 'invalid_image', 'The WebP file size is invalid.' );
+		}
+		$handle = fopen( $path, 'rb' );
+		if ( false === $handle ) {
+			throw new OptimizationException( 'invalid_image', 'The WebP file could not be opened.' );
+		}
+		$declared = unpack( 'V', fread( $handle, 4 ) )[1] + 8;
+		if ( $declared !== $bytes || 'WEBP' !== fread( $handle, 4 ) ) {
+			fclose( $handle );
+			throw new OptimizationException( 'invalid_image', 'The WebP RIFF header or length is invalid.' );
+		}
+		$width     = 0;
+		$height    = 0;
+		$alpha     = false;
+		$animated  = false;
+		$has_frame = false;
+		$offset    = 12;
+		try {
+			while ( $offset + 8 <= $bytes ) {
+				$chunk = fread( $handle, 8 );
+				if ( 8 !== strlen( $chunk ) ) {
+					break; }
+				$info   = unpack( 'a4type/Vlength', $chunk );
+				$length = (int) $info['length'];
+				if ( $length > $bytes - $offset - 8 ) {
+					throw new OptimizationException( 'invalid_image', 'A WebP chunk exceeds the file boundary.' ); }
+				$data = fread( $handle, min( $length, 10 ) );
+				if ( strlen( $data ) !== min( $length, 10 ) ) {
+					throw new OptimizationException( 'invalid_image', 'A WebP image chunk is truncated.' ); }
+				switch ( $info['type'] ) {
+					case 'VP8X':
+						if ( $length < 10 ) {
+							throw new OptimizationException( 'invalid_image', 'The WebP extended header is invalid.' ); }
+						$flags    = ord( $data[0] );
+						$animated = 0 !== ( $flags & 0x02 );
+						$alpha    = 0 !== ( $flags & 0x10 );
+						$width    = 1 + unpack( 'V', substr( $data, 4, 3 ) . "\0" )[1];
+						$height   = 1 + unpack( 'V', substr( $data, 7, 3 ) . "\0" )[1];
+						break;
+					case 'VP8L':
+						$has_frame = true;
+						if ( $length < 5 || "\x2f" !== $data[0] ) {
+							throw new OptimizationException( 'invalid_image', 'The WebP lossless header is invalid.' ); }
+						$bits   = unpack( 'V', substr( $data, 1, 4 ) )[1];
+						$width  = ( $bits & 0x3fff ) + 1;
+						$height = ( ( $bits >> 14 ) & 0x3fff ) + 1;
+						$alpha  = 0 !== ( $bits & ( 1 << 28 ) );
+						break;
+					case 'VP8 ':
+						$has_frame = true;
+						if ( $length < 10 || "\x9d\x01\x2a" !== substr( $data, 3, 3 ) ) {
+							throw new OptimizationException( 'invalid_image', 'The WebP lossy frame header is invalid.' ); }
+						$dimensions = unpack( 'vwidth/vheight', substr( $data, 6, 4 ) );
+						$width      = $dimensions['width'] & 0x3fff;
+						$height     = $dimensions['height'] & 0x3fff;
+						break;
+				}
+				$offset += 8 + $length + ( $length % 2 );
+				fseek( $handle, $offset );
+			}
+		} finally {
+			fclose( $handle ); }
+		if ( $offset !== $bytes || ! $has_frame || 0 === $width || 0 === $height ) {
+			throw new OptimizationException( 'invalid_image', 'The WebP image frame is missing.' ); }
+		return array( $width, $height, $alpha, $animated );
+	}
+
+	/** Validates a bounded ISO-BMFF AVIF still-image container and its primary dimensions.
+	 *
+	 * @param string $path  Image path.
+	 * @param int    $bytes Measured file size.
+	 * @return array{int, int, bool, bool} Dimensions, animation flag, and alpha presence.
+	 * @throws OptimizationException When the container is invalid.
+	 */
+	private function inspect_avif( string $path, int $bytes ): array {
+		if ( $bytes < 32 || $bytes > 52428800 ) {
+			throw new OptimizationException( 'invalid_image', 'The AVIF file is truncated or exceeds the output validation limit.' ); }
+		$data = file_get_contents( $path );
+		if ( ! is_string( $data ) ) {
+			throw new OptimizationException( 'invalid_image', 'The AVIF data could not be read.' ); }
+		$offset   = 0;
+		$ftyp     = false;
+		$meta     = false;
+		$mdat     = false;
+		$animated = false;
+		while ( $offset + 8 <= $bytes ) {
+			$box_size    = unpack( 'N', substr( $data, $offset, 4 ) )[1];
+			$type        = substr( $data, $offset + 4, 4 );
+			$header_size = 8;
+			if ( 1 === $box_size ) {
+				if ( $offset + 16 > $bytes ) {
+					break;
+				} $box_size  = (int) unpack( 'J', substr( $data, $offset + 8, 8 ) )[1];
+				$header_size = 16; } elseif ( 0 === $box_size ) {
+				$box_size = $bytes - $offset; }
+				if ( $box_size < $header_size || $box_size > $bytes - $offset ) {
+					throw new OptimizationException( 'invalid_image', 'An AVIF box exceeds the file boundary.' ); }
+				$payload = substr( $data, $offset + $header_size, $box_size - $header_size );
+				if ( 'ftyp' === $type ) {
+					$ftyp     = str_contains( $payload, 'avif' );
+					$animated = str_contains( $payload, 'avis' ); }
+				if ( 'meta' === $type ) {
+					$meta = true; }
+				if ( 'mdat' === $type ) {
+					$mdat = true; }
+				$offset += $box_size;
+		}
+		if ( $offset !== $bytes || ! $ftyp || ! $meta || ! $mdat ) {
+			throw new OptimizationException( 'invalid_image', 'The AVIF container is incomplete or has invalid structure.' ); }
+		$position = strpos( $data, 'ispe' );
+		if ( false === $position || $position + 16 > $bytes ) {
+			throw new OptimizationException( 'invalid_image', 'AVIF primary image dimensions are missing.' ); }
+		$dimensions = unpack( 'Nwidth/Nheight', substr( $data, $position + 8, 8 ) );
+		$alpha      = str_contains( $data, 'urn:mpeg:mpegB:cicp:systems:auxiliary:alpha' );
+		return array( (int) $dimensions['width'], (int) $dimensions['height'], $animated, $alpha );
 	}
 
 	/** Validates PNG chunks and computes CRC values in a bounded stream.
 	 *
 	 * @param string $path  PNG path.
 	 * @param int    $bytes Measured file size.
-	 * @return array{int, int, array<string, bool>, bool} Width, height, metadata, and animation flag.
+	 * @return array{int, int, array<string, bool>, bool, bool} Width, height, metadata, animation flag, and alpha presence.
 	 * @throws OptimizationException When PNG structure or CRC validation fails.
 	 */
 	private function inspect_png( string $path, int $bytes ): array {
@@ -70,6 +205,7 @@ final class ImageValidator {
 		$finished_idat = false;
 		$seen_plte     = false;
 		$color_type    = null;
+		$alpha         = false;
 		$offset        = 8;
 		fseek( $handle, 8 );
 		try {
@@ -102,6 +238,7 @@ final class ImageValidator {
 					$width        = (int) $values['width'];
 					$height       = (int) $values['height'];
 					$color_type   = (int) $values['color_type'];
+					$alpha        = in_array( $color_type, array( 4, 6 ), true );
 					$valid_depths = array(
 						0 => array( 1, 2, 4, 8, 16 ),
 						2 => array( 8, 16 ),
@@ -147,6 +284,8 @@ final class ImageValidator {
 							$animated = true;
 						}
 					}
+					if ( 'tRNS' === $type ) {
+						$alpha = true; }
 				}
 				if ( 'IHDR' !== $type ) {
 					$remaining = $length;
@@ -183,7 +322,7 @@ final class ImageValidator {
 		if ( ! $seen_ihdr || ! $seen_idat || ! $seen_iend ) {
 			throw new OptimizationException( 'invalid_image', 'The PNG is incomplete.' );
 		}
-		return array( $width, $height, $metadata, $animated );
+		return array( $width, $height, $metadata, $animated, $alpha );
 	}
 
 	/** Reads JPEG frame dimensions and known marker metadata.

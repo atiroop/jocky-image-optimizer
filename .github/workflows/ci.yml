@@ -94,7 +94,7 @@ jobs:
       - name: Install trusted Ubuntu build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install --no-install-recommends -y build-essential cmake libpng-dev nasm pkg-config rustc cargo
+          sudo apt-get install --no-install-recommends -y build-essential cmake libpng-dev nasm pkg-config rustc cargo webp=1.3.2-0.4build3 libavif-bin=1.0.4-1ubuntu3
       - name: Build pinned MozJPEG source
         run: |
           set -euo pipefail
@@ -119,4 +119,8 @@ jobs:
           jpegtran -version
           pngquant --version
           oxipng --version
+          cwebp -version
+          avifenc --version
+          dwebp -version
+          avifdec --version
           composer test:encoders
