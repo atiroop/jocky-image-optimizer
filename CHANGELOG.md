@@ -1,11 +1,11 @@
 # Changelog
 
-## Unreleased — Milestone 5 recovery implementation (CI pending)
+## Unreleased — Milestone 5 recovery implementation (CI verified 2026-11-10)
 
 - Added schema-v2 derivative ownership, persistent recovery audit, and resumable bounded cleanup-batch records while preserving the existing queue tables and atomic queue operations.
 - Added bounded streaming source/derivative SHA-256 verification, safe registry-only cleanup with path/symlink/inode checks, operation locks, explicit confirmation, cleanup preview, and legacy JIO metadata discovery.
 - Added paginated Recovery and Optimization History admin pages, Media Library recovery links, and `wp jio recovery` status, verify, preview, cleanup, scan, and bulk controls.
-- Added integration coverage for derivative registry creation, corruption detection, queue/lock conflict handling, cleanup audit, and preservation of originals, thumbnails, and attachment metadata. GitHub Actions has not yet run for this revision.
+- Added integration coverage for derivative registry creation, corruption detection, queue/lock conflict handling, cleanup audit, and preservation of originals, thumbnails, and attachment metadata. All five jobs passed in [GitHub Actions run 42775341373](https://github.com/atiroop/jocky-image-optimizer/actions/runs/42775341373) on commit `5e7497af9f7be78c2f693cbb9f4cfe5a0e90e871`.
 - Recovery preview rechecks conflicted and interrupted-removal records so detected corruption remains visible and repaired files become eligible only after fresh validation. Queue savings aggregation now uses signed arithmetic when an output is larger than its input.
 - Known limits: 50 MiB per-file and 100 MiB per-operation hash bounds; trust in non-hostile local uploads-directory writers due to portable PHP unlink TOCTOU limits; MySQL advisory locks are connection scoped; original restoration requires an external backup.
 

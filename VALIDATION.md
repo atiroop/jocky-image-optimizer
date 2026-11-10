@@ -1,8 +1,10 @@
 # Validation
 
-## Milestone 5 — derivative recovery and lifecycle (implementation; CI pending)
+## Milestone 5 — derivative recovery and lifecycle (CI verified)
 
 The feature implementation is on `feature/milestone-5-backup-restore`, created from the clean verified beta branch at `40309db5cd8d84cc1820f232a74b492fbfaaa063`. The supplied Milestone 5 handoff ends mid-section 13 (“Recovery operations must not race with:”); work follows the complete requirements provided before that cutoff. No production/VPS access or media modification was performed.
+
+GitHub Actions [run 42775341373](https://github.com/atiroop/jocky-image-optimizer/actions/runs/42775341373) passed on commit `5e7497af9f7be78c2f693cbb9f4cfe5a0e90e871`; all five jobs succeeded, including both disposable WordPress matrix versions, real encoder tests, and beta artifact packaging.
 
 | Check | Result | Evidence / limitation |
 |---|---|---|
@@ -10,14 +12,15 @@ The feature implementation is on `feature/milestone-5-backup-restore`, created f
 | Standalone tests | Passed locally | `composer test` passed all existing 30 checks. |
 | Composer validation and audit | Passed locally | `composer validate --no-check-publish` valid; `composer audit --locked` found no advisories. |
 | PHP syntax | Passed locally | `php -l` passed for 43 PHP files on PHP 8.5.0. PHP 8.3 is not installed locally. |
-| Workflow YAML/schema | Passed locally | `actionlint .github/workflows/ci.yml` passed. Existing PHP 8.3 WordPress matrix will execute the expanded integration suite. |
+| Workflow YAML/schema | Passed locally | `actionlint .github/workflows/ci.yml` passed. |
 | Production ZIP | Passed locally | Followed `composer install --no-dev`, built `build/jocky-image-optimizer-0.4.0-beta.zip`, and `composer test:package` confirmed its structure and production dependencies; development dependencies were restored afterward. |
-| Real encoder integration | Not passed locally | `composer test:encoders` was attempted; it stopped at the required `cjpeg` preflight because trusted encoder binaries are not installed. No tools were installed. Encoder code was not changed in this milestone. |
-| WordPress integration | Not run locally | No local WP-CLI, Docker/Podman, disposable WordPress core, or database runtime is available. The new recovery test is included in the existing full WordPress integration job, but must pass on GitHub before this milestone is marked verified. |
-| Original/media safety | Implemented; CI pending | Integration coverage checks source bytes, core attachment metadata, thumbnails, corruption rejection, lock conflicts, and audit persistence. No production media was accessed. |
+| Real encoder integration | Passed in CI | `encoder-integration` installed trusted, pinned encoders and passed real fixture integration. Local `composer test:encoders` stopped at the `cjpeg` preflight because encoder binaries are not installed locally. |
+| WordPress integration | Passed in CI | Both PHP 8.3 disposable production-ZIP integration jobs passed on WordPress 6.6.11 and 7.1.4. This Windows workspace has no local WP-CLI, Docker/Podman, disposable core, or database runtime. |
+| Original/media safety | Passed in CI | Integration coverage checked source bytes, core attachment metadata, thumbnails, corruption rejection, lock conflicts, and audit persistence. No production media was accessed. |
+| Artifact | Passed in CI | `beta-package-artifact` succeeded; it builds and validates the production ZIP. |
 | Filesystem race boundary | Limitation documented | Uses canonical uploads confinement, symlink rejection, streamed digests, device/inode/size/mtime identity recheck, and shared MySQL advisory locks. PHP cannot eliminate the final unlink TOCTOU window against a hostile local writer; uploads directories must be writable only by trusted site processes. |
 
-Implemented behavior includes schema-v2 derivative registry/audit/batch tables, bounded verification and legacy indexing, per-attachment cleanup preview/actions, paginated bulk candidate preview and persistent cleanup worker controls, history, and WP-CLI recovery commands. The digest manifest is not an independent backup: missing/corrupt originals require UpdraftPlus or another verified external backup. Hashing is limited to 50 MiB per file and 100 MiB per operation; ambiguous or over-limit files fail closed. CI results are pending and no WordPress compatibility claim is made for this revision until Actions runs successfully.
+Implemented behavior includes schema-v2 derivative registry/audit/batch tables, bounded verification and legacy indexing, per-attachment cleanup preview/actions, paginated bulk candidate preview and persistent cleanup worker controls, history, and WP-CLI recovery commands. The digest manifest is not an independent backup: missing/corrupt originals require UpdraftPlus or another verified external backup. Hashing is limited to 50 MiB per file and 100 MiB per operation; ambiguous or over-limit files fail closed. The handoff truncation leaves unspecified race scenarios in section 13 unassessed; supported locking and remaining filesystem race limits are stated above.
 
 ## Milestone 4.5 beta release — CI verified
 
