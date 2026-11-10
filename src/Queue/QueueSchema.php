@@ -23,10 +23,11 @@ final class QueueSchema {
 		if ( ! isset( $GLOBALS['wpdb'] ) ) {
 			return;
 		}
-		if ( (int) get_option( self::OPTION, 0 ) >= self::VERSION ) {
+		if ( (int) get_option( self::OPTION, 0 ) < self::VERSION || ! self::tables_exist() ) {
+			self::install();
 			return;
 		}
-		self::install();
+		self::seed_slots();
 	}
 
 	/** Creates or upgrades queue tables and records the schema version. */
@@ -75,15 +76,27 @@ final class QueueSchema {
 		) {$collate} ENGINE=InnoDB;";
 		dbDelta( $jobs_sql );
 		dbDelta( $slots_sql );
-		$jobs_exists  = $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $jobs ) );
-		$slots_exists = $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $slots ) );
-		if ( $jobs !== $jobs_exists || $slots !== $slots_exists ) {
+		if ( ! self::tables_exist() ) {
 			return;
 		}
-		for ( $slot = 0; $slot <= 4; ++$slot ) {
-			$wpdb->query( $wpdb->prepare( "INSERT IGNORE INTO {$slots} (slot_id) VALUES (%d)", $slot ) );
-		}
+		self::seed_slots();
 		update_option( self::OPTION, self::VERSION, false );
+	}
+
+	/** Checks the required queue tables using the active WordPress prefix. */
+	private static function tables_exist(): bool {
+		global $wpdb;
+		$jobs  = self::jobs_table();
+		$slots = self::slots_table();
+		return $jobs === $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $jobs ) )
+			&& $slots === $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $slots ) );
+	}
+
+	/** Restores any missing bounded worker and scanner slot rows idempotently. */
+	private static function seed_slots(): void {
+		global $wpdb;
+		$table = self::slots_table();
+		$wpdb->query( "INSERT IGNORE INTO {$table} (slot_id) VALUES (0),(1),(2),(3),(4)" );
 	}
 
 	/** Returns the safely prefixed queue table name.

@@ -1,6 +1,6 @@
 # Validation
 
-## Milestone 4 implementation — validation pending
+## Milestone 4 implementation — CI repair in progress
 
 The feature branch now contains WordPress Media Library queue integration. The code and integration coverage are implemented, but this section must not be read as CI verification until GitHub Actions completes successfully for the pushed commit.
 
@@ -13,7 +13,13 @@ The feature branch now contains WordPress Media Library queue integration. The c
 | WordPress integration | Not run locally | This Windows environment has no PHP 8.3, disposable WordPress/MySQL test runtime, or Docker. The CI matrix is configured for PHP 8.3 and WordPress 6.6.11/7.1.4 and will exercise the generated production ZIP. |
 | Real media encoder in Media Library | Not run locally | Linux `cwebp` is unavailable here. CI's disposable WordPress jobs install Ubuntu's `webp` package to run actual PNG-to-WebP attachment/thumbnail processing. Milestone 3's real encoder CI remains prior evidence for the engine, not this integration. |
 | Package / ZIP | Pending local execution | Run after `composer install --no-dev`, package and ZIP checks; WordPress CI repeats these checks before installing the archive. |
-| GitHub Actions | Pending | No Milestone 4 workflow result exists before this branch is pushed. Do not claim CI success until the run reports all jobs green. |
+| GitHub Actions before focused repair | Failed | [Run 42745181377](https://github.com/atiroop/jocky-image-optimizer/actions/runs/42745181377): static/unit and encoder integration passed; WordPress 6.6.11 and 7.1.4 failed four assertions. The exact reproducible failures were zero completed worker results, zero automatic pending jobs, zero scanner attachments, and zero skipped jobs. |
+
+### Confirmed queue investigation and current repair status
+
+Inspection of WordPress's PHPUnit test base confirmed it starts a database transaction for each test (`SET autocommit=0; START TRANSACTION`) and rolls it back in teardown. The previous repository issued nested `START TRANSACTION` and `COMMIT` calls for claims and leases, which could commit the test's outer transaction and invalidate fixture isolation. Independently, `renew_slot()` treated the changed-row count as proof of ownership; MySQL reports zero changed rows when the lease timestamp update falls within the same UTC second, causing the worker to stop before claiming any job. The previous run's fixture diagnostic showed the real attachment provider returned targets, so attachment discovery itself was not the common cause.
+
+The current focused repair replaces explicit transaction blocks with atomic conditional InnoDB updates for slot claims, scanner leases, and job claims; renewal now checks the ownership token even when no timestamp value changed. Schema checks now reseed missing slot rows even when the stored version is current, and PHPUnit schema installation is moved to class setup rather than repeated per-test DDL. Added regression coverage checks table engines, schema-version recovery, missing seed recovery, slot 0/1 availability, same-second renewal, lease release, and preservation of the active WordPress test transaction. These changes have not yet run on GitHub Actions; the next workflow result will establish whether the diagnosis fully explains all four failures.
 
 Implemented integration coverage includes individual attachment and thumbnail processing, auto enqueue off/on and deduplication, persistent claims/retries/stale recovery/pause/cancel, bounded scanner pagination, source and core metadata preservation, unsupported/deleted/missing media, authorization, dashboard data, and deactivation preservation. Known limits include local upload-root-only processing (remote/offloaded storage is refused), WP-Cron's traffic dependence, cancellation of pending work only, no multisite integration run, and possible operator cleanup if a valid derivative is written but postmeta persistence fails. See `ARCHITECTURE.md` for queue and filesystem details.
 

@@ -41,7 +41,7 @@ final class Plugin {
 	/** Adds default settings without replacing existing values. */
 	public static function activate(): void {
 		if ( isset( $GLOBALS['wpdb'] ) ) {
-			QueueSchema::install();
+			QueueSchema::maybe_install();
 		}
 		if ( get_option( self::OPTION_NAME, false ) === false ) {
 			add_option( self::OPTION_NAME, Settings::defaults(), '', false );
@@ -50,6 +50,6 @@ final class Plugin {
 
 	/** Deactivates the plugin without deleting settings or media. */
 	public static function deactivate(): void {
-		// No scheduled work or persistent runtime state exists in Milestone 1.
+		// Keep scheduled queue work and persistent image/job data intact.
 	}
 }

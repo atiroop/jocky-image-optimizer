@@ -50,7 +50,7 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 			do_action( 'plugins_loaded' );
 			self::$plugin_booted = true;
 		}
-		QueueSchema::install();
+		QueueSchema::maybe_install();
 		$this->jobs = new JobRepository();
 		global $wpdb;
 		$wpdb->query( 'DELETE FROM ' . QueueSchema::jobs_table() );
@@ -92,6 +92,7 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 
 	public static function setUpBeforeClass(): void {
 		parent::setUpBeforeClass();
+		QueueSchema::install();
 		$uploads = wp_upload_dir();
 		wp_mkdir_p( $uploads['basedir'] );
 		self::$media_fixture = trailingslashit( $uploads['basedir'] ) . 'jio-integration-sentinel.png';
@@ -100,6 +101,47 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 			base64_decode( 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADUlEQVQIHWP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC' )
 		);
 		self::$media_fixture_hash = hash_file( 'sha256', self::$media_fixture );
+	}
+
+	public function test_schema_seed_recovery_and_queue_leases_preserve_wordpress_test_transaction(): void {
+		global $wpdb;
+		$jobs_table  = QueueSchema::jobs_table();
+		$slots_table = QueueSchema::slots_table();
+		$this->assertSame( $jobs_table, $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $jobs_table ) ) );
+		$this->assertSame( $slots_table, $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $slots_table ) ) );
+		$this->assertSame( QueueSchema::VERSION, (int) get_option( QueueSchema::OPTION ) );
+		$this->assertSame( 'InnoDB', $wpdb->get_var( $wpdb->prepare( 'SELECT ENGINE FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s', $jobs_table ) ) );
+		$this->assertSame( 'InnoDB', $wpdb->get_var( $wpdb->prepare( 'SELECT ENGINE FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s', $slots_table ) ) );
+
+		$wpdb->query( "DELETE FROM {$slots_table} WHERE slot_id IN (0,1,2,3,4)" );
+		QueueSchema::maybe_install();
+		$slot_ids = array_map( 'intval', (array) $wpdb->get_col( "SELECT slot_id FROM {$slots_table} ORDER BY slot_id ASC" ) );
+		$this->assertSame( array( 0, 1, 2, 3, 4 ), $slot_ids, 'current schemas reseed missing lock rows' );
+		$this->assertNull( $wpdb->get_var( "SELECT lock_token FROM {$slots_table} WHERE slot_id = 0" ), 'scanner slot is available after seeding' );
+		$this->assertNull( $wpdb->get_var( "SELECT lock_token FROM {$slots_table} WHERE slot_id = 1" ), 'first worker slot is available after seeding' );
+		$this->assertSame( '', $wpdb->last_error, 'queue schema and seed queries report no database error' );
+
+		$transaction_state = (int) $wpdb->get_var( 'SELECT @@in_transaction' );
+		$repository        = new JobRepository();
+		$worker_token      = bin2hex( random_bytes( 32 ) );
+		$this->assertTrue( $repository->acquire_slot( $worker_token, 1 ) );
+		$this->assertTrue( $repository->renew_slot( $worker_token ), 'same-second renewal confirms existing token ownership' );
+		$this->assertSame( $transaction_state, (int) $wpdb->get_var( 'SELECT @@in_transaction' ), 'worker leases do not commit WordPress test transactions' );
+		$repository->release_slot( $worker_token );
+		$this->assertFalse( $repository->renew_slot( $worker_token ) );
+
+		$scanner_token = bin2hex( random_bytes( 32 ) );
+		$this->assertTrue( $repository->acquire_scanner_lease( $scanner_token ) );
+		$this->assertSame( $transaction_state, (int) $wpdb->get_var( 'SELECT @@in_transaction' ), 'scanner lease does not commit WordPress test transactions' );
+		$repository->release_scanner_lease( $scanner_token );
+		$this->assertTrue( $repository->acquire_scanner_lease( bin2hex( random_bytes( 32 ) ) ), 'scanner lease is released for the next page' );
+	}
+
+	public function test_schema_version_mismatch_reapplies_idempotent_migration(): void {
+		update_option( QueueSchema::OPTION, QueueSchema::VERSION - 1 );
+		QueueSchema::maybe_install();
+		$this->assertSame( QueueSchema::VERSION, (int) get_option( QueueSchema::OPTION ) );
+		$this->assertSame( '', $GLOBALS['wpdb']->last_error );
 	}
 
 	public static function tearDownAfterClass(): void {
@@ -318,6 +360,7 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 		$this->assertSame( $metadata, apply_filters( 'wp_generate_attachment_metadata', $metadata, $attachment_id, 'create' ) );
 		$this->assertSame( 0, $this->jobs->pending_count() );
 		$this->set_output_format( 'webp', true );
+		$this->assertCount( 2, ( new AttachmentJobFactory() )->jobs_for_attachment( $attachment_id ), 'factory discovers the original and thumbnail for the enabled format' );
 		$this->assertSame( $metadata, apply_filters( 'wp_generate_attachment_metadata', $metadata, $attachment_id, 'create' ) );
 		$this->assertSame( 2, $this->jobs->pending_count() );
 		apply_filters( 'wp_generate_attachment_metadata', $metadata, $attachment_id, 'update' );
@@ -386,6 +429,7 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 		}
 		$worker  = new QueueWorker( $this->jobs );
 		$scanner = new BulkScanner( $this->jobs, $worker );
+		$this->assertSame( BulkScanner::BATCH + 1, $scanner->count_attachments(), 'scan query sees each disposable test attachment' );
 		$this->assertTrue( $scanner->start() );
 		$this->assertSame( BulkScanner::BATCH, $scanner->scan_batch() );
 		$this->assertSame( BulkScanner::BATCH, $this->jobs->pending_count() );

@@ -55,4 +55,5 @@
 - Added local attachment/thumbnail discovery, individual Media Library queue action, optional off-by-default upload enqueueing, paginated bulk scan, queue controls, persisted progress, and bounded WP-CLI worker.
 - Processing creates separate validated `.jio.webp`/`.jio.avif` files with hidden structured attachment metadata. Originals and core attachment metadata are preserved; derivatives are inactive for frontend delivery.
 - Added packaged-plugin integration cases for image processing, source preservation, queue lifecycle, scanner pagination, and authorization. PHP 8.3 CI results are pending until the workflow runs.
+- Replaced nested explicit transactions with single-statement atomic queue/lease claims to preserve WordPress PHPUnit test isolation; corrected same-second worker lease renewal and added idempotent missing-slot recovery.
 - Added minimal `*.php text eol=lf` policy for consistent Windows and CI lint behavior.

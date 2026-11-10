@@ -69,28 +69,16 @@ final class JobRepository {
 	 */
 	public function acquire_slot( string $token, int $concurrency ): bool {
 		global $wpdb;
-		$table = QueueSchema::slots_table();
-		if ( false === $wpdb->query( 'START TRANSACTION' ) ) {
-			return false;
-		}
-		$slot = $wpdb->get_var(
+		$table   = QueueSchema::slots_table();
+		$updated = $wpdb->query(
 			$wpdb->prepare(
-				"SELECT slot_id FROM {$table} WHERE slot_id BETWEEN 1 AND %d AND (lock_token IS NULL OR locked_at < DATE_SUB(UTC_TIMESTAMP(), INTERVAL %d SECOND)) ORDER BY slot_id ASC LIMIT 1 FOR UPDATE",
+				"UPDATE {$table} SET lock_token = %s, locked_at = UTC_TIMESTAMP() WHERE slot_id BETWEEN 1 AND %d AND (lock_token IS NULL OR locked_at < DATE_SUB(UTC_TIMESTAMP(), INTERVAL %d SECOND)) ORDER BY slot_id ASC LIMIT 1",
+				$token,
 				max( 1, min( 4, $concurrency ) ),
 				self::STALE_SECONDS
 			)
 		);
-		if ( null === $slot ) {
-			$wpdb->query( 'COMMIT' );
-			return false;
-		}
-		$updated = $wpdb->query( $wpdb->prepare( "UPDATE {$table} SET lock_token = %s, locked_at = UTC_TIMESTAMP() WHERE slot_id = %d", $token, (int) $slot ) );
-		if ( false === $updated ) {
-			$wpdb->query( 'ROLLBACK' );
-			return false;
-		}
-		$wpdb->query( 'COMMIT' );
-		return true;
+		return 1 === $updated;
 	}
 
 	/** Atomically acquires the single bulk scanner lease in slot zero.
@@ -100,22 +88,15 @@ final class JobRepository {
 	 */
 	public function acquire_scanner_lease( string $token ): bool {
 		global $wpdb;
-		$table = QueueSchema::slots_table();
-		if ( false === $wpdb->query( 'START TRANSACTION' ) ) {
-			return false;
-		}
-		$slot = $wpdb->get_var( $wpdb->prepare( "SELECT slot_id FROM {$table} WHERE slot_id = 0 AND (lock_token IS NULL OR locked_at < DATE_SUB(UTC_TIMESTAMP(), INTERVAL %d SECOND)) FOR UPDATE", self::STALE_SECONDS ) );
-		if ( null === $slot ) {
-			$wpdb->query( 'COMMIT' );
-			return false;
-		}
-		$updated = $wpdb->query( $wpdb->prepare( "UPDATE {$table} SET lock_token = %s, locked_at = UTC_TIMESTAMP() WHERE slot_id = 0", $token ) );
-		if ( 1 !== $updated ) {
-			$wpdb->query( 'ROLLBACK' );
-			return false;
-		}
-		$wpdb->query( 'COMMIT' );
-		return true;
+		$table   = QueueSchema::slots_table();
+		$updated = $wpdb->query(
+			$wpdb->prepare(
+				"UPDATE {$table} SET lock_token = %s, locked_at = UTC_TIMESTAMP() WHERE slot_id = 0 AND (lock_token IS NULL OR locked_at < DATE_SUB(UTC_TIMESTAMP(), INTERVAL %d SECOND))",
+				$token,
+				self::STALE_SECONDS
+			)
+		);
+		return 1 === $updated;
 	}
 
 	/** Releases the bulk scanner lease only when the token still matches.
@@ -134,8 +115,9 @@ final class JobRepository {
 	 */
 	public function renew_slot( string $token ): bool {
 		global $wpdb;
-		$result = $wpdb->query( $wpdb->prepare( 'UPDATE ' . QueueSchema::slots_table() . ' SET locked_at = UTC_TIMESTAMP() WHERE lock_token = %s', $token ) );
-		return 1 === $result;
+		$table = QueueSchema::slots_table();
+		$wpdb->query( $wpdb->prepare( "UPDATE {$table} SET locked_at = UTC_TIMESTAMP() WHERE lock_token = %s", $token ) );
+		return null !== $wpdb->get_var( $wpdb->prepare( "SELECT slot_id FROM {$table} WHERE lock_token = %s LIMIT 1", $token ) );
 	}
 
 	/** Releases only the slot owned by this worker.
@@ -154,29 +136,18 @@ final class JobRepository {
 	 */
 	public function claim_next( string $token ): ?array {
 		global $wpdb;
-		$table = QueueSchema::jobs_table();
-		if ( false === $wpdb->query( 'START TRANSACTION' ) ) {
-			return null;
-		}
-		$job = $wpdb->get_row( "SELECT * FROM {$table} WHERE status = 'pending' AND available_at <= UTC_TIMESTAMP() ORDER BY id ASC LIMIT 1 FOR UPDATE", ARRAY_A );
-		if ( ! is_array( $job ) ) {
-			$wpdb->query( 'COMMIT' );
-			return null;
-		}
+		$table   = QueueSchema::jobs_table();
 		$updated = $wpdb->query(
 			$wpdb->prepare(
-				"UPDATE {$table} SET status = 'running', attempts = attempts + 1, lock_token = %s, locked_at = UTC_TIMESTAMP(), started_at = UTC_TIMESTAMP(), updated_at = UTC_TIMESTAMP(), error_code = NULL WHERE id = %d AND status = 'pending'",
-				$token,
-				(int) $job['id']
+				"UPDATE {$table} SET status = 'running', attempts = attempts + 1, lock_token = %s, locked_at = UTC_TIMESTAMP(), started_at = UTC_TIMESTAMP(), updated_at = UTC_TIMESTAMP(), error_code = NULL WHERE status = 'pending' AND available_at <= UTC_TIMESTAMP() ORDER BY id ASC LIMIT 1",
+				$token
 			)
 		);
 		if ( 1 !== $updated ) {
-			$wpdb->query( 'ROLLBACK' );
 			return null;
 		}
-		$wpdb->query( 'COMMIT' );
-		$job['attempts'] = (int) $job['attempts'] + 1;
-		return $job;
+		$job = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$table} WHERE status = 'running' AND lock_token = %s ORDER BY id DESC LIMIT 1", $token ), ARRAY_A );
+		return is_array( $job ) ? $job : null;
 	}
 
 	/** Returns expired running jobs to the queue or marks exhausted jobs failed. */
