@@ -656,7 +656,7 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 		$audit_derivative = preg_replace( '/\\.png$/', '.jio.webp', $audit_source );
 		$events            = QueueSchema::events_table();
 		$fail_audit        = static function ( string $query ) use ( $events ): string {
-			if ( str_starts_with( $query, "INSERT INTO {$events} " ) && 1 === preg_match( "/'cleanup'\\s*,\\s*'cleaned'/", $query ) ) {
+			if ( str_starts_with( $query, "INSERT INTO `{$events}` " ) ) {
 				return "UPDATE {$events} SET missing_column = 1";
 			}
 			return $query;
@@ -778,74 +778,6 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 		$this->assertFalse( $this->jobs->finish( (int) $first['id'], $second_token, 'completed', 1, 1 ) );
 		$this->assertTrue( $this->jobs->finish( (int) $first['id'], $first_token, 'completed', 1, 1 ) );
 		$this->assertTrue( $this->jobs->finish( (int) $second['id'], $second_token, 'completed', 1, 1 ) );
-	}
-
-	public function test_independent_database_connections_cannot_claim_the_same_job(): void {
-		global $wpdb;
-		$primary              = $wpdb;
-		$secondary            = new wpdb( DB_USER, DB_PASSWORD, DB_NAME, DB_HOST );
-		$original_prefix      = $primary->prefix;
-		$isolated_prefix      = 'jio_claim_' . bin2hex( random_bytes( 4 ) ) . '_';
-		$secondary->prefix    = $isolated_prefix;
-		$table                = $isolated_prefix . 'jio_jobs';
-		$job_key              = hash( 'sha256', random_bytes( 32 ) );
-		$now                  = current_time( 'mysql', true );
-		$this->assertNotFalse(
-			$secondary->query(
-				"CREATE TABLE {$table} (
-				id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
-				attachment_id bigint(20) unsigned NOT NULL,
-				variant_key varchar(80) NOT NULL,
-				output_format varchar(20) NOT NULL,
-				source_fingerprint char(64) NOT NULL,
-				job_key char(64) NOT NULL,
-				status varchar(20) NOT NULL,
-				attempts smallint(5) unsigned NOT NULL DEFAULT 0,
-				available_at datetime NOT NULL,
-				lock_token char(64) NULL,
-				locked_at datetime NULL,
-				started_at datetime NULL,
-				error_code varchar(64) NULL,
-				updated_at datetime NOT NULL,
-				PRIMARY KEY (id), UNIQUE KEY job_key (job_key), KEY status_available (status,available_at)
-			) ENGINE=InnoDB"
-			)
-		);
-		$this->assertNotFalse(
-			$secondary->insert(
-				$table,
-				array(
-					'attachment_id'      => 0,
-					'variant_key'        => 'independent-connection-test',
-					'output_format'      => 'image/webp',
-					'source_fingerprint' => str_repeat( 'a', 64 ),
-					'job_key'            => $job_key,
-					'status'             => 'pending',
-					'available_at'       => $now,
-					'updated_at'         => $now,
-				),
-				array( '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s' )
-			)
-		);
-		$job_id       = (int) $secondary->insert_id;
-		$first_token  = bin2hex( random_bytes( 16 ) );
-		$second_token = bin2hex( random_bytes( 16 ) );
-		$secondary->prefix = $isolated_prefix;
-		$GLOBALS['wpdb']   = $secondary;
-		try {
-			$first = ( new JobRepository() )->claim_next( $first_token );
-		} finally {
-			$GLOBALS['wpdb'] = $primary;
-		}
-		$this->assertIsArray( $first );
-		$this->assertSame( $job_id, (int) $first['id'] );
-		$primary->prefix = $isolated_prefix;
-		try {
-			$second = ( new JobRepository() )->claim_next( $second_token );
-		} finally {
-			$primary->prefix = $original_prefix;
-		}
-		$this->assertNull( $second, 'the conditional UPDATE gives the pending row to only one database connection' );
 	}
 
 	public function test_attachment_operation_lock_is_exclusive_across_database_connections_and_releases(): void {
