@@ -292,6 +292,10 @@ final class AttachmentProcessor {
 	 * @return int|false Registry row identifier or false on failure.
 	 */
 	private function persist_ownership( int $attachment_id, array $target, string $derivative_relative_path, string $format, string $mime, array $source_hash, array $derivative_hash, string $encoder_id, array $parameters ): int|false {
+		$uploads       = wp_upload_dir();
+		$path          = empty( $uploads['error'] ) && isset( $uploads['basedir'] ) ? trailingslashit( $uploads['basedir'] ) . str_replace( '/', DIRECTORY_SEPARATOR, $derivative_relative_path ) : '';
+		$stat          = '' !== $path && ! is_link( $path ) && is_file( $path ) ? stat( $path ) : false;
+		$identity      = false !== $stat ? implode( ':', array( (int) $stat['dev'], (int) $stat['ino'], (int) $stat['size'], (int) $stat['mtime'] ) ) : '';
 		$metadata      = wp_get_attachment_metadata( $attachment_id );
 		$attached      = get_post_meta( $attachment_id, '_wp_attached_file', true );
 		$metadata_hash = hash(
@@ -303,7 +307,7 @@ final class AttachmentProcessor {
 				)
 			)
 		);
-		return ( new DerivativeRepository() )->record(
+		$record_id     = ( new DerivativeRepository() )->record(
 			array(
 				'attachment_id'            => $attachment_id,
 				'variant_key'              => $target['variant_key'],
@@ -316,12 +320,17 @@ final class AttachmentProcessor {
 				'derivative_relative_path' => $derivative_relative_path,
 				'output_format'            => $format,
 				'derivative_sha256'        => $derivative_hash['sha256'],
+				'derivative_identity'      => $identity,
 				'input_bytes'              => $source_hash['bytes'],
 				'output_bytes'             => $derivative_hash['bytes'],
 				'encoder_id'               => $encoder_id,
 				'encoder_parameters'       => (string) wp_json_encode( $parameters ),
 			)
 		);
+		if ( false !== $record_id ) {
+			do_action( 'jio_derivative_updated', $attachment_id );
+		}
+		return $record_id;
 	}
 
 	/** Returns a destination path relative to the current upload root.

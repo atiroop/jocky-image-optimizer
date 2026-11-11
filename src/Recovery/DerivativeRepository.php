@@ -27,9 +27,9 @@ final class DerivativeRepository {
 		$key   = hash( 'sha256', implode( '|', array( (int) $record['attachment_id'], (string) $record['variant_key'], (string) $record['output_format'], (string) $record['source_sha256'] ) ) );
 		$table = QueueSchema::derivatives_table();
 		$sql   = $wpdb->prepare(
-			"INSERT INTO {$table} (record_key,attachment_id,variant_key,source_relative_path,source_mime,source_bytes,source_sha256,source_fingerprint,metadata_hash,derivative_relative_path,output_format,derivative_sha256,input_bytes,output_bytes,encoder_id,encoder_parameters,validation_status,lifecycle_status,created_at,updated_at)
-			VALUES (%s,%d,%s,%s,%s,%d,%s,%s,%s,%s,%s,%s,%d,%d,%s,%s,'valid','active',UTC_TIMESTAMP(),UTC_TIMESTAMP())
-			ON DUPLICATE KEY UPDATE source_relative_path=VALUES(source_relative_path),source_mime=VALUES(source_mime),source_bytes=VALUES(source_bytes),source_fingerprint=VALUES(source_fingerprint),metadata_hash=VALUES(metadata_hash),derivative_relative_path=VALUES(derivative_relative_path),derivative_sha256=VALUES(derivative_sha256),input_bytes=VALUES(input_bytes),output_bytes=VALUES(output_bytes),encoder_id=VALUES(encoder_id),encoder_parameters=VALUES(encoder_parameters),validation_status='valid',lifecycle_status='active',updated_at=UTC_TIMESTAMP()",
+			"INSERT INTO {$table} (record_key,attachment_id,variant_key,source_relative_path,source_mime,source_bytes,source_sha256,source_fingerprint,metadata_hash,derivative_relative_path,output_format,derivative_sha256,derivative_identity,input_bytes,output_bytes,encoder_id,encoder_parameters,validation_status,lifecycle_status,created_at,updated_at)
+			VALUES (%s,%d,%s,%s,%s,%d,%s,%s,%s,%s,%s,%s,%s,%d,%d,%s,%s,'valid','active',UTC_TIMESTAMP(),UTC_TIMESTAMP())
+			ON DUPLICATE KEY UPDATE source_relative_path=VALUES(source_relative_path),source_mime=VALUES(source_mime),source_bytes=VALUES(source_bytes),source_fingerprint=VALUES(source_fingerprint),metadata_hash=VALUES(metadata_hash),derivative_relative_path=VALUES(derivative_relative_path),derivative_sha256=VALUES(derivative_sha256),derivative_identity=VALUES(derivative_identity),input_bytes=VALUES(input_bytes),output_bytes=VALUES(output_bytes),encoder_id=VALUES(encoder_id),encoder_parameters=VALUES(encoder_parameters),validation_status='valid',lifecycle_status='active',updated_at=UTC_TIMESTAMP()",
 			$key,
 			(int) $record['attachment_id'],
 			(string) $record['variant_key'],
@@ -42,6 +42,7 @@ final class DerivativeRepository {
 			(string) $record['derivative_relative_path'],
 			(string) $record['output_format'],
 			(string) $record['derivative_sha256'],
+			(string) ( $record['derivative_identity'] ?? '' ),
 			(int) $record['input_bytes'],
 			(int) $record['output_bytes'],
 			(string) $record['encoder_id'],

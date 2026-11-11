@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Jocky Image Optimizer
  * Description: Local image optimization with a safe background queue for WordPress media.
- * Version: 0.4.0-beta
+ * Version: 0.6.0-beta.1
  * Requires at least: 6.6
  * Requires PHP: 8.3
  * Author: Jocky
@@ -18,7 +18,7 @@ declare(strict_types=1);
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'JIO_VERSION', '0.4.0-beta' );
+define( 'JIO_VERSION', '0.6.0-beta.1' );
 define( 'JIO_FILE', __FILE__ );
 define( 'JIO_DIR', plugin_dir_path( __FILE__ ) );
 define( 'JIO_URL', plugin_dir_url( __FILE__ ) );

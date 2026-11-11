@@ -10,6 +10,7 @@ declare(strict_types=1);
 namespace Jocky\ImageOptimizer\Admin;
 
 use Jocky\ImageOptimizer\CapabilityDetector;
+use Jocky\ImageOptimizer\Delivery\DeliveryDiagnostics;
 use Jocky\ImageOptimizer\Queue\BulkScanner;
 use Jocky\ImageOptimizer\Queue\JobRepository;
 use Jocky\ImageOptimizer\Queue\QueueState;
@@ -463,7 +464,7 @@ final class AdminPages {
 		}
 		$capabilities = $this->capabilities->detect();
 		echo '<div class="wrap"><h1>' . esc_html__( 'Jocky Image Optimizer', 'jocky-image-optimizer' ) . '</h1>';
-		echo '<p>' . esc_html__( 'Optimization creates separate local derivatives. Originals and WordPress attachment metadata remain unchanged; generated files are inactive for frontend delivery.', 'jocky-image-optimizer' ) . '</p>';
+		echo '<p>' . esc_html__( 'Optimization creates separate local derivatives. Originals and WordPress attachment metadata remain unchanged; frontend delivery is disabled by default.', 'jocky-image-optimizer' ) . '</p>';
 		echo '<h2>' . esc_html__( 'System capabilities', 'jocky-image-optimizer' ) . '</h2><table class="widefat striped"><thead><tr><th>' . esc_html__( 'Capability', 'jocky-image-optimizer' ) . '</th><th>' . esc_html__( 'Status', 'jocky-image-optimizer' ) . '</th><th>' . esc_html__( 'Details', 'jocky-image-optimizer' ) . '</th></tr></thead><tbody>';
 		foreach ( $capabilities as $name => $capability ) {
 			printf( '<tr><td>%1$s</td><td>%2$s</td><td>%3$s</td></tr>', esc_html( ucwords( str_replace( '_', ' ', $name ) ) ), esc_html( $capability['available'] ? __( 'Available', 'jocky-image-optimizer' ) : __( 'Unavailable', 'jocky-image-optimizer' ) ), esc_html( $capability['detail'] ) );
@@ -472,6 +473,12 @@ final class AdminPages {
 		if ( null !== $this->jobs && null !== $this->bulk_scanner ) {
 			$this->render_queue_dashboard();
 		}
+		$delivery = Settings::sanitize( get_option( Plugin::OPTION_NAME, array() ) );
+		$summary  = ( new DeliveryDiagnostics() )->summary();
+		echo '<h2>' . esc_html__( 'Frontend delivery', 'jocky-image-optimizer' ) . '</h2><p>' . esc_html( $delivery['frontend_delivery'] ? __( 'Enabled', 'jocky-image-optimizer' ) : __( 'Disabled', 'jocky-image-optimizer' ) ) . '</p>';
+		printf( '<p>%1$s: %2$s; %3$s: %4$s.</p>', esc_html__( 'Active, registry-valid derivative records', 'jocky-image-optimizer' ), esc_html( number_format_i18n( $summary['registered_valid'] ) ), esc_html__( 'Inactive or registry-invalid records', 'jocky-image-optimizer' ), esc_html( number_format_i18n( $summary['registry_invalid'] ) ) );
+		printf( '<p>%1$s: %2$s; %3$s: %4$s; %5$s: %6$s; %7$s: %8$s; %9$s: %10$s / %11$s.</p>', esc_html__( 'Eligible MIME-type attachments (upper bound)', 'jocky-image-optimizer' ), esc_html( number_format_i18n( $summary['eligible_mime_attachments'] ) ), esc_html__( 'Current derivative sample', 'jocky-image-optimizer' ), esc_html( number_format_i18n( $summary['sample_size'] ) ), esc_html__( 'Valid in sample', 'jocky-image-optimizer' ), esc_html( number_format_i18n( $summary['sample_valid'] ) ), esc_html__( 'Missing in sample', 'jocky-image-optimizer' ), esc_html( number_format_i18n( $summary['sample_missing'] ) ), esc_html__( 'Unavailable in sample (stale, busy, or unsupported)', 'jocky-image-optimizer' ), esc_html( number_format_i18n( $summary['sample_invalid_or_stale'] ) ), esc_html( number_format_i18n( $summary['sample_size'] ) ) );
+		printf( '<p>%1$s: %2$s. %3$s</p>', esc_html__( 'Last diagnostics result', 'jocky-image-optimizer' ), esc_html( $summary['checked_at'] ), esc_html__( 'The most recent 25 active records are checked without content hashing; eligible attachment count is an upper bound based on MIME only.', 'jocky-image-optimizer' ) );
 		echo '</div>';
 	}
 
@@ -498,8 +505,20 @@ final class AdminPages {
 		$this->number_field( 'image_quality', __( 'Image quality', 'jocky-image-optimizer' ), $settings['image_quality'], 1, 100 );
 		$this->number_field( 'minimum_quality', __( 'Minimum PNG quality', 'jocky-image-optimizer' ), $settings['minimum_quality'], 1, 100 );
 		$this->checkbox_field( 'auto_optimize', __( 'Automatically optimize new uploads', 'jocky-image-optimizer' ), $settings['auto_optimize'] );
+		$this->checkbox_field( 'frontend_delivery', __( 'Enable frontend delivery', 'jocky-image-optimizer' ), $settings['frontend_delivery'] );
+		$this->select_field(
+			'delivery_preference',
+			__( 'Delivery format preference', 'jocky-image-optimizer' ),
+			$settings['delivery_preference'],
+			array(
+				'auto'        => __( 'Auto (AVIF, WebP, original)', 'jocky-image-optimizer' ),
+				'prefer_webp' => __( 'Prefer WebP', 'jocky-image-optimizer' ),
+				'webp_only'   => __( 'WebP only (original remains fallback)', 'jocky-image-optimizer' ),
+				'avif_only'   => __( 'AVIF only (original remains fallback)', 'jocky-image-optimizer' ),
+			)
+		);
 		$this->number_field( 'concurrency', __( 'Maximum concurrent workers', 'jocky-image-optimizer' ), $settings['concurrency'], 1, 4 );
-		echo '</tbody></table><p class="description">' . esc_html__( 'Automatic optimization is disabled by default. Queue workers run through WP-Cron or WP-CLI. Originals and core-generated thumbnail files are retained.', 'jocky-image-optimizer' ) . '</p>';
+		echo '</tbody></table><p class="description">' . esc_html__( 'Automatic optimization and frontend delivery are disabled by default. The original image always remains as the browser fallback. Purge Cloudflare manually after changing delivery settings.', 'jocky-image-optimizer' ) . '</p>';
 		submit_button();
 		echo '</form></div>';
 	}

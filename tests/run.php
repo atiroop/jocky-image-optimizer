@@ -96,9 +96,34 @@ $assert   = static function ( bool $condition, string $message ) use ( &$failure
 	}
 };
 
+require_once dirname( __DIR__ ) . '/scripts/package-version.php';
+$repository_root = dirname( __DIR__ );
+$release_version = jio_package_version( $repository_root );
+$assert( '0.6.0-beta.1' === $release_version, 'authoritative VERSION matches plugin, README, and changelog metadata' );
+$assert( version_compare( $release_version, '0.4.0-beta', '>' ), 'native version comparison recognizes the new plugin as newer than the installed beta' );
+$assert( version_compare( '0.6.0-beta.1', '0.6.0-beta.2', '<' ) && version_compare( '0.6.0-beta.2', '0.6.0', '<' ), 'native version comparison orders beta prereleases below later prereleases and stable release' );
+$metadata_fixture = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'jio-version-fixture-' . bin2hex( random_bytes( 8 ) );
+mkdir( $metadata_fixture, 0700 );
+foreach ( array( 'VERSION', 'jocky-image-optimizer.php', 'README.md', 'CHANGELOG.md' ) as $metadata_file ) {
+	copy( $repository_root . DIRECTORY_SEPARATOR . $metadata_file, $metadata_fixture . DIRECTORY_SEPARATOR . $metadata_file );
+}
+file_put_contents( $metadata_fixture . DIRECTORY_SEPARATOR . 'README.md', "# Jocky Image Optimizer 0.4.0-beta\n" );
+$metadata_mismatch_rejected = false;
+try {
+	jio_package_version( $metadata_fixture );
+} catch ( RuntimeException $exception ) {
+	$metadata_mismatch_rejected = true;
+}
+foreach ( array( 'VERSION', 'jocky-image-optimizer.php', 'README.md', 'CHANGELOG.md' ) as $metadata_file ) {
+	unlink( $metadata_fixture . DIRECTORY_SEPARATOR . $metadata_file );
+}
+rmdir( $metadata_fixture );
+$assert( $metadata_mismatch_rejected, 'release metadata validation rejects an inconsistent README version' );
+
 $defaults = Settings::defaults();
 $assert( $defaults['concurrency'] === 1, 'default worker concurrency is bounded to one' );
 $assert( $defaults['output_format'] === 'original', 'default output preserves original format' );
+$assert( false === $defaults['frontend_delivery'] && 'auto' === $defaults['delivery_preference'], 'frontend delivery defaults off with safe automatic format preference' );
 
 $settings = Settings::sanitize(
 	array(
@@ -111,6 +136,7 @@ $settings = Settings::sanitize(
 	)
 );
 $assert( $settings['output_format'] === 'original', 'invalid output format uses safe default' );
+$assert( false === $settings['frontend_delivery'] && 'auto' === $settings['delivery_preference'], 'invalid or missing delivery controls stay safe and disabled' );
 $assert( $settings['image_quality'] === 100, 'quality is capped at 100' );
 $assert( $settings['max_width'] === 0 && $settings['max_height'] === 640, 'dimensions are sanitized and bounded' );
 $assert( $settings['auto_optimize'] === true && $settings['keep_backup'] === true, 'checkbox values are normalized safely' );

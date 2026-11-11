@@ -1,5 +1,61 @@
 # Validation
 
+## Milestone 6 final browser and Elementor acceptance
+
+The final focused browser run [42977047573](https://github.com/atiroop/jocky-image-optimizer/actions/runs/42977047573) on `feature/milestone-6-frontend-delivery` at `1e789b40ab9f9a0d53c93b6d13cc9f30a1c40fc8` passed all six jobs: static/unit, WordPress 6.6.11, WordPress 7.1.4, encoder integration, frontend browser integration, and beta package artifact.
+
+The `srcset` mismatch was a test baseline error. Stage A, `wp_get_attachment_image()`, emitted five JPEG responsive candidates. Elementor 4.4.0's Image Box stage B (its output before JIO's widget callback) omitted `srcset`; stage C after JIO also omitted it; stage D in Chromium's legacy fallback retained that Elementor behavior and loaded the original JPEG successfully. The test had selected the generic WordPress JPEG baseline for an Elementor assertion. It now compares Elementor's actual pre-hook attributes with the final image and uses the correct widget baseline. No synthetic `srcset` is inserted and no production transformation change was needed.
+
+The supported Elementor mode is Element Caching OFF. With it OFF, Chromium verified Image and Image Box WebP/AVIF selection, original fallbacks, attributes, and responsive behavior. With Element Caching ON, the run observed warm cached Elementor output with zero widget-hook calls and original images; cold renders fail closed. This does not invalidate previously cached document HTML and is not full cache compatibility. Administrators must disable Element Cache and may need to clear Elementor Files & Data before relying on delivery changes. Gutenberg delivery remains independent of Elementor's cache.
+
+The browser suite also passed legacy, missing, and stale derivative fallback, reoptimization, OFF/ON rollback, unsupported CSS background preservation, resource MIME/currentSrc/natural dimensions, no broken image requests, and no frontend encoder execution.
+
+| Final check | Result | Evidence |
+|---|---|---|
+| WPCS and standalone | Passed locally | `composer lint`: 0 errors/warnings; `composer test`: 47/47. The final CI `static-and-unit` job also passed. |
+| Composer/workflow/PHP/JS validation | Passed locally | `composer validate --no-check-publish`, `composer audit --locked`, `actionlint .github/workflows/ci.yml`, PHP syntax, Node syntax, and `git diff --check` passed. |
+| WordPress integration | Passed in CI | PHP 8.3 disposable packaged-plugin jobs passed on WordPress 6.6.11 and 7.1.4. Not runnable locally because the workspace lacks disposable WordPress/MySQL runtime. |
+| Real encoders | Passed in CI | Isolated real-encoder integration job passed. Encoder binaries are not installed in this Windows workspace. |
+| Browser / Elementor | Passed in CI | Run 42977047573 used disposable WordPress 7.1.4, Elementor 4.4.0, and Chromium. Local browser integration is unavailable. |
+| Production ZIP artifact | Passed and validated | Artifact `jocky-image-optimizer-0.6.0-beta.1`, ID `13836221448`, downloaded from [run 42977047573](https://github.com/atiroop/jocky-image-optimizer/actions/runs/42977047573/artifacts/13836221448). The installable ZIP is 112,785 bytes; SHA-256 `A4C964AF35DE9D1A1A81A5CA117AD5A6B51E7D6C6FBBEF6F311038E9FD6F6897`. `php scripts/validate-package.php` passed on the downloaded ZIP and confirmed its production dependencies and one-directory structure. |
+
+No production site, VPS, database, media, Elementor, WP Rocket, or Cloudflare configuration was accessed or modified.
+
+## Milestone 6 initial browser acceptance (historical failure)
+
+The initial browser run [42956164775](https://github.com/atiroop/jocky-image-optimizer/actions/runs/42956164775) failed because Elementor's warm document cache skipped `elementor/widget/render_content`. The focused cache policy and supported-mode browser acceptance above supersede that pending result; the limitation remains documented and tested.
+
+## Milestone 6 implementation baseline (before browser acceptance)
+
+Target release version is `0.6.0-beta.1`. The implementation is on `feature/milestone-6-frontend-delivery` at commit `1672531c028e3fbed4f839273089314280131be2`. GitHub Actions run [42935865495](https://github.com/atiroop/jocky-image-optimizer/actions/runs/42935865495) passed all five jobs: static/unit, real encoder integration, packaged WordPress integration on 6.6.11 and 7.1.4, and beta package artifact publication.
+
+| Local check | Result | Evidence / limitation |
+|---|---|---|
+| WPCS | Passed | `composer lint`: 0 errors and 0 warnings across 47 PHP files. |
+| Standalone tests | Passed | `composer test`: all 36 checks passed, including default-off delivery and version metadata. |
+| Composer validate/audit | Passed | `composer validate --no-check-publish` valid; `composer audit --locked` reported no advisories. |
+| actionlint / diff | Passed | `actionlint .github/workflows/ci.yml` and `git diff --check` passed. |
+| PHP syntax | Passed on PHP 8.5 | All project PHP files passed `php -l`; PHP 8.3 is not installed locally and must be validated by CI. |
+| Production ZIP | Passed locally | Built after `composer install --no-dev`; `composer test:package` passed. Filename `jocky-image-optimizer-0.6.0-beta.1.zip`, one top-level plugin directory, runtime autoloader included, dev dependencies excluded. SHA-256 `5BBF84DFF32C3D1E350D61E2D73A36CDD57E974F2A43A47DC3745E1767FE4C89`. |
+| WordPress integration | Passed in CI; not run locally | The CI jobs installed and exercised the generated production ZIP against WordPress 6.6.11 and 7.1.4 on PHP 8.3. Local `composer test:integration` could not start because this workspace lacks the WordPress test library and disposable database runtime. |
+| Real encoder tests | Passed in CI; not run locally | The isolated Linux encoder job installed trusted MozJPEG, pngquant, oxipng, WebP, and AVIF tools and passed real fixture tests. Local `composer test:encoders` is unavailable because encoder executables including `cjpeg` are not installed. |
+| Browser / Elementor runtime | Pending current workflow | The earlier run did not install Chromium or Elementor. The new five-job workflow adds an isolated WordPress 7.1.4 + Elementor 4.4.0 + Chromium run; no pass is claimed until that run completes. |
+| Downloaded artifact | Passed | Artifact `jocky-image-optimizer-0.6.0-beta.1`, ID `13818128489`, is available from [run 42935865495](https://github.com/atiroop/jocky-image-optimizer/actions/runs/42935865495/artifacts/13818128489). Downloaded ZIP is 110,792 bytes, SHA-256 `28722693AB4DBF0FC9AE9321CC7EF3BB0AD9F0C2982EA496920A85A50D938D69`; `php scripts/validate-package.php` confirmed the exact expected one-directory production ZIP structure and runtime dependencies. |
+
+The module uses `wp_get_attachment_image` and `wp_content_img_tag`; original markup remains the fallback. The schema migration adds a nullable derivative file identity. Existing Milestone 5 rows are preserved, but rows with no identity are intentionally not served. They need re-optimization before frontend delivery can select them. The exact downloadable package passed both real WordPress matrix jobs and the artifact job.
+
+The earlier five-job CI run passed actual packaged ZIP installation/activation, database setup, default-off delivery, real WebP/AVIF generation and selection, preference order, original fallback attributes and responsive candidates, stale derivative fallback, and disabling delivery. It did not establish browser-level Chromium or actual Elementor runtime compatibility. No production site, VPS, database, media, cache, or settings were accessed.
+
+### Manual browser procedure (disposable staging only)
+
+1. Install the exact package ZIP on a disposable WordPress site with PHP 8.3 and a database/uploads backup. Keep delivery OFF and confirm rendered attachment images contain the original `<img>` without a JIO `<picture>` wrapper.
+2. With local encoders installed, create test JPEG and transparent PNG attachments, queue WebP and AVIF derivatives, and wait for the normal worker to finish. Do not use production media.
+3. Add an attachment image through the Media Library, a Gutenberg Image block, and a Classic Editor image. Enable delivery, purge page caches, and inspect each rendered `<picture>` in Chromium DevTools. Confirm source order follows the selected preference, the `<img>` fallback is the original URL, and `sizes`, intrinsic dimensions, alt, loading, and decoding remain present.
+4. In the browser console, run `Array.from(document.querySelectorAll('picture')).map((p) => ({ types: Array.from(p.querySelectorAll('source')).map((s) => s.type), fallback: p.querySelector('img')?.getAttribute('src'), current: p.querySelector('img')?.currentSrc, complete: p.querySelector('img')?.complete }))`. Confirm currentSrc is a browser-supported derivative, complete is true, and the fallback remains original. Use the Network panel to verify there are no failed image requests.
+5. Test a derivative after removing it only from disposable test media, and confirm output falls back to the original on a fresh uncached request. Turn delivery OFF, purge WP Rocket/Cloudflare/page cache, reload, and confirm original-only markup. This is a manual browser procedure, not a CI result.
+
+The cache integration calls WP Rocket's documented `rocket_clean_domain()` function when available ([WP Rocket API reference](https://docs.wp-rocket.me/article/92-rocketcleandomain)); that API clears the full domain cache. Cloudflare remains a manual purge. No WP Rocket, Cloudflare, browser, or Elementor runtime test has been executed by this workspace.
+
 ## Milestone 5 — safety closure (CI verified)
 
 The feature implementation is on `feature/milestone-5-backup-restore`. This closure adds a default-off destructive recovery gate, stale-lease lock coordination, stronger unlink-boundary checks, independent worker tests, and migration retry tests. The latest closure commit `5642b386264b363c72c75f270fd46b7b6ef93063` passed all five jobs in [run 42796876298](https://github.com/atiroop/jocky-image-optimizer/actions/runs/42796876298). No production/VPS access or media modification was performed.

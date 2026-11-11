@@ -11,7 +11,13 @@ try {
 	exit( 1 );
 }
 $archive_path = $argv[1] ?? $root . '/build/jocky-image-optimizer-' . $version . '.zip';
+$expected_archive = 'jocky-image-optimizer-' . $version . '.zip';
+if ( basename( $archive_path ) !== $expected_archive ) {
+	fwrite( STDERR, "ZIP filename must be {$expected_archive}.\n" );
+	exit( 1 );
+}
 $required     = array(
+	'jocky-image-optimizer/VERSION',
 	'jocky-image-optimizer/jocky-image-optimizer.php',
 	'jocky-image-optimizer/vendor/autoload.php',
 	'jocky-image-optimizer/vendor/composer/autoload_psr4.php',
@@ -65,7 +71,7 @@ foreach ( $required as $entry ) {
 }
 
 foreach ( $entries as $entry ) {
-	if ( preg_match( '~^jocky-image-optimizer/(?:vendor/(?:phpunit|squizlabs|wp-coding-standards|phpcsstandards|dealerdirect)/|tests/|bin/|scripts/|\.github/|composer\.(?:json|lock)$|php(?:cs|unit)\.xml\.dist$|(?:AGENTS|SPEC|ROADMAP|ARCHITECTURE|VALIDATION)\.md$|(?:\.git|\.env|\.codex|\.gitattributes)(?:/|$))~', $entry ) || preg_match( '~(?:^|/)(?:\.env(?:\.[^/]*)?|id_rsa(?:\.pub)?|id_ed25519(?:\.pub)?|credentials(?:\.[^/]*)?|secrets?(?:\.[^/]*)?)$|\.(?:pem|p12|pfx|key)$~i', $entry ) ) {
+	if ( preg_match( '~^jocky-image-optimizer/(?:vendor/(?:phpunit|squizlabs|wp-coding-standards|phpcsstandards|dealerdirect)/|tests/|bin/|scripts/|\.github/|composer\.(?:json|lock)$|php(?:cs|unit)\.xml\.dist$|(?:AGENTS|SPEC|ROADMAP|ARCHITECTURE|VALIDATION|CHANGELOG)\.md$|(?:\.git|\.env|\.codex|\.gitattributes)(?:/|$))~', $entry ) || preg_match( '~(?:^|/)(?:\.env(?:\.[^/]*)?|id_rsa(?:\.pub)?|id_ed25519(?:\.pub)?|credentials(?:\.[^/]*)?|secrets?(?:\.[^/]*)?)$|\.(?:pem|p12|pfx|key)$~i', $entry ) ) {
 		$archive->close();
 		fwrite( STDERR, "ZIP contains a development-only file: {$entry}\n" );
 		exit( 1 );
@@ -77,6 +83,8 @@ $runtime_autoload = $archive->getFromName( 'jocky-image-optimizer/vendor/autoloa
 $runtime_autoload_real = $archive->getFromName( 'jocky-image-optimizer/vendor/composer/autoload_real.php' );
 $runtime_autoload_static = $archive->getFromName( 'jocky-image-optimizer/vendor/composer/autoload_static.php' );
 $plugin_entry            = $archive->getFromName( 'jocky-image-optimizer/jocky-image-optimizer.php' );
+$packaged_version        = $archive->getFromName( 'jocky-image-optimizer/VERSION' );
+$packaged_readme         = $archive->getFromName( 'jocky-image-optimizer/README.md' );
 $archive->close();
 $runtime_loader_files = array( $runtime_autoload, $runtime_autoload_real, $runtime_autoload_static );
 foreach ( $runtime_loader_files as $loader_file ) {
@@ -91,7 +99,7 @@ if ( ! is_array( $installed ) || ! array_key_exists( 'dev', $installed ) || true
 	exit( 1 );
 }
 
-if ( ! is_string( $plugin_entry ) || 1 !== preg_match( '/^\s*\* Version:\s*([0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.]+)?)\s*$/m', $plugin_entry, $header ) || $version !== $header[1] || 1 !== preg_match( "/define\(\s*'JIO_VERSION'\s*,\s*'" . preg_quote( $version, '/' ) . "'\s*\)/", $plugin_entry ) ) {
+if ( ! is_string( $plugin_entry ) || ! is_string( $packaged_version ) || ! is_string( $packaged_readme ) || trim( $packaged_version ) !== $version || 1 !== preg_match( '/^\s*\* Version:\s*([^\r\n]+)\s*$/m', $plugin_entry, $header ) || $version !== trim( $header[1] ) || 1 !== preg_match_all( "/define\(\s*'JIO_VERSION'\s*,\s*'([^']+)'\s*\)/", $plugin_entry, $constants ) || 1 !== preg_match( '/^# Jocky Image Optimizer (\S+)\s*$/m', $packaged_readme, $title ) || $version !== $constants[1][0] || $version !== $title[1] ) {
 	fwrite( STDERR, "ZIP plugin version does not match the package version.\n" );
 	exit( 1 );
 }
