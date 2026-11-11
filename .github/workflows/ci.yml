@@ -19,6 +19,11 @@ jobs:
           extensions: mbstring, mysqli, xml, zip
           tools: composer:v2
       - run: composer install --no-interaction --prefer-dist
+      - name: Validate workflow syntax
+        run: |
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          "$(go env GOPATH)/bin/actionlint" .github/workflows/ci.yml
       - run: composer validate --no-check-publish
       - run: composer audit --locked
       - name: WordPress Coding Standards
@@ -63,7 +68,7 @@ jobs:
       - name: Install WebP encoder for packaged media integration tests
         run: |
           sudo apt-get update
-          sudo apt-get install --no-install-recommends -y webp
+          sudo apt-get install --no-install-recommends -y webp=1.3.2-0.4build3 libavif-bin=1.0.4-1ubuntu3
       - run: composer install --no-interaction --prefer-dist
       - name: Build and verify production ZIP
         env:

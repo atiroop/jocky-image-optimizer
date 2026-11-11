@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use Jocky\ImageOptimizer\Admin\AdminPages;
 use Jocky\ImageOptimizer\CapabilityDetector;
+use Jocky\ImageOptimizer\Delivery\FrontendDelivery;
 use Jocky\ImageOptimizer\Media\AttachmentTargetProvider;
 use Jocky\ImageOptimizer\Media\MediaIntegration;
 use Jocky\ImageOptimizer\Queue\AttachmentJobFactory;
@@ -159,12 +160,35 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 				'output_format'            => 'webp',
 			)
 		);
+		$registry = new \Jocky\ImageOptimizer\Recovery\DerivativeRepository();
+		$registry_id = $registry->record(
+			array(
+				'attachment_id' => $attachment_id,
+				'variant_key' => 'full',
+				'source_relative_path' => 'migration-preserves-data.png',
+				'source_mime' => 'image/png',
+				'source_bytes' => 20,
+				'source_sha256' => str_repeat( 'a', 64 ),
+				'source_fingerprint' => str_repeat( 'b', 64 ),
+				'metadata_hash' => str_repeat( 'c', 64 ),
+				'derivative_relative_path' => 'migration-preserves-data.jio.webp',
+				'output_format' => 'image/webp',
+				'derivative_sha256' => str_repeat( 'd', 64 ),
+				'derivative_identity' => '1:2:3:4',
+				'input_bytes' => 20,
+				'output_bytes' => 10,
+				'encoder_id' => 'test',
+				'encoder_parameters' => '{}',
+			)
+		);
+		$this->assertGreaterThan( 0, $registry_id );
 		update_option( QueueSchema::OPTION, QueueSchema::VERSION - 1 );
 		QueueSchema::maybe_install();
 		$this->assertSame( QueueSchema::VERSION, (int) get_option( QueueSchema::OPTION ) );
 		$this->assertSame( $job_count, $this->jobs->pending_count(), 'migration preserves pre-existing queue records' );
 		$this->assertSame( '2026/11/source.jio.webp', get_post_meta( $attachment_id, '_jio_derivative_legacy', true )['derivative_relative_path'], 'migration preserves legacy derivative ownership metadata for safe indexing' );
 		$this->assertSame( '', $wpdb->last_error );
+		$this->assertSame( '1:2:3:4', $registry->get( $registry_id )['derivative_identity'], 'additive schema migration preserves existing derivative rows and metadata' );
 	}
 
 	public function test_bulk_scanner_normalizes_legacy_partial_progress_state(): void {
@@ -226,7 +250,7 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 	public function test_beta_zip_activation_initializes_queue_schema_and_safe_defaults(): void {
 		global $wpdb;
 		$plugin_data = get_plugin_data( JIO_FILE, false, false );
-		$this->assertSame( '0.5.0-beta', JIO_VERSION );
+		$this->assertSame( '0.6.0-beta.1', JIO_VERSION );
 		$this->assertSame( JIO_VERSION, $plugin_data['Version'], 'WordPress reads the uploaded plugin header version' );
 		$this->assertTrue( version_compare( $plugin_data['Version'], '0.4.0-beta', '>' ), 'WordPress native version comparison recognizes the uploaded release as newer' );
 		$this->assertTrue( version_compare( '0.6.0-beta.1', '0.6.0-beta.2', '<' ), 'WordPress native comparison orders prerelease identifiers' );
@@ -494,6 +518,74 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 		$this->assertSame( $metadata, wp_get_attachment_metadata( $attachment_id ) );
 		$this->assertFileExists( preg_replace( '/\.jpg$/', '.jio.webp', $source ) );
 		$this->assertSame( 0, $this->jobs->pending_count(), 'bounded worker batch leaves no second job for this JPEG' );
+	}
+
+	public function test_frontend_delivery_is_default_off_and_wraps_owned_webp_with_original_fallback(): void {
+		$this->set_output_format( 'webp' );
+		[ $attachment_id, $source, $metadata ] = $this->create_png_attachment( 'delivery', true );
+		$original_html = wp_get_attachment_image( $attachment_id, 'full', false, array( 'alt' => 'safe image', 'class' => 'example', 'loading' => 'lazy', 'decoding' => 'async' ) );
+		$this->assertFalse( Settings::sanitize( get_option( Plugin::OPTION_NAME ) )['frontend_delivery'] );
+		$this->assertStringNotContainsString( '<picture>', $original_html, 'default-off leaves WordPress markup untouched' );
+		$this->assertSame( 2, ( new QueueWorker( $this->jobs ) )->run_batch( 2 )['completed'] );
+		$source_hash = hash_file( 'sha256', $source );
+		$attached = get_post_meta( $attachment_id, '_wp_attached_file', true );
+		$this->assertSame( $metadata, wp_get_attachment_metadata( $attachment_id ) );
+		$this->assertSame( $source_hash, hash_file( 'sha256', $source ) );
+		$settings = Settings::sanitize( get_option( Plugin::OPTION_NAME ) );
+		$settings['frontend_delivery'] = true;
+		update_option( Plugin::OPTION_NAME, $settings );
+		$delivery = new FrontendDelivery();
+		$delivery->register();
+		$picture = wp_get_attachment_image( $attachment_id, 'full', false, array( 'alt' => 'safe image', 'class' => 'example', 'loading' => 'lazy', 'decoding' => 'async' ) );
+		$this->assertStringContainsString( '<picture>', $picture );
+		$this->assertStringContainsString( 'type="image/webp"', $picture );
+		$this->assertStringContainsString( 'src="' . esc_url( wp_get_attachment_image_url( $attachment_id, 'full' ) ) . '"', $picture );
+		$this->assertStringContainsString( 'alt="safe image"', $picture );
+		$this->assertStringContainsString( 'loading="lazy"', $picture );
+		$this->assertStringContainsString( 'decoding="async"', $picture );
+		$this->assertStringContainsString( 'class="example"', $picture );
+		$this->assertStringContainsString( 'sizes=', $picture );
+		$content_picture = $delivery->content_image( $original_html, 'the_content', $attachment_id );
+		$this->assertStringContainsString( '<picture>', $content_picture, 'core-recognized content image receives the same safe delivery wrapper' );
+		$this->assertStringContainsString( 'src="' . esc_url( wp_get_attachment_image_url( $attachment_id, 'full' ) ) . '"', $content_picture );
+		$this->assertSame( $attached, get_post_meta( $attachment_id, '_wp_attached_file', true ) );
+		$records = ( new \Jocky\ImageOptimizer\Recovery\DerivativeRepository() )->for_attachment( $attachment_id );
+		$this->assertNotEmpty( $records[0]['derivative_identity'], 'new records include lightweight current file identity' );
+		global $wpdb;
+		$wpdb->update( QueueSchema::derivatives_table(), array( 'derivative_identity' => 'stale-identity' ), array( 'id' => (int) $records[0]['id'] ), array( '%s' ), array( '%d' ) );
+		$stale_delivery = new FrontendDelivery();
+		$this->assertSame( $original_html, $stale_delivery->attachment_image( $original_html, $attachment_id, 'full', false, array() ), 'changed derivative identity safely falls back to original markup' );
+		$settings['frontend_delivery'] = false;
+		update_option( Plugin::OPTION_NAME, $settings );
+		$disabled = new FrontendDelivery();
+		$this->assertSame( $original_html, $disabled->attachment_image( $original_html, $attachment_id, 'full', false, array() ), 'disabling restores original markup for uncached requests' );
+	}
+
+	public function test_frontend_delivery_prefers_avif_then_webp_and_retains_srcset_and_fallback(): void {
+		$this->set_output_format( 'both' );
+		[ $attachment_id ] = $this->create_png_attachment( 'delivery-mixed', true );
+		$this->assertSame( 4, ( new QueueWorker( $this->jobs ) )->run_batch( 4 )['completed'] );
+		$settings = Settings::sanitize( get_option( Plugin::OPTION_NAME ) );
+		$settings['frontend_delivery'] = false;
+		update_option( Plugin::OPTION_NAME, $settings );
+		$original = wp_get_attachment_image( $attachment_id, 'full' );
+		$settings['frontend_delivery'] = true;
+		update_option( Plugin::OPTION_NAME, $settings );
+		$delivery = new FrontendDelivery();
+		$picture = $delivery->attachment_image( $original, $attachment_id, 'full', false, array() );
+		$this->assertStringContainsString( '<source type="image/avif"', $picture );
+		$this->assertStringContainsString( '<source type="image/webp"', $picture );
+		$this->assertLessThan( strpos( $picture, '<source type="image/webp"' ), strpos( $picture, '<source type="image/avif"' ) );
+		$this->assertStringContainsString( '<img', $picture );
+		$this->assertStringContainsString( 'srcset=', $picture, 'original responsive candidates remain on the fallback img' );
+		$this->assertStringContainsString( 'data-jio-delivery="1"', $picture );
+		$this->assertSame( $picture, $delivery->attachment_image( $picture, $attachment_id, 'full', false, array() ), 'JIO-marked picture output is not wrapped a second time' );
+		$settings['delivery_preference'] = 'webp_only';
+		update_option( Plugin::OPTION_NAME, $settings );
+		$webp_delivery = new FrontendDelivery();
+		$webp_only = $webp_delivery->attachment_image( $original, $attachment_id, 'full', false, array() );
+		$this->assertStringContainsString( 'type="image/webp"', $webp_only );
+		$this->assertStringNotContainsString( 'type="image/avif"', $webp_only );
 	}
 
 	public function test_recovery_verifies_corruption_and_cleans_only_registered_derivatives(): void {

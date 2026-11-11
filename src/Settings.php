@@ -18,14 +18,16 @@ final class Settings {
 	 */
 	public static function defaults(): array {
 		return array(
-			'output_format'   => 'original',
-			'image_quality'   => 82,
-			'minimum_quality' => 65,
-			'max_width'       => 0,
-			'max_height'      => 0,
-			'auto_optimize'   => false,
-			'keep_backup'     => true,
-			'concurrency'     => 1,
+			'output_format'       => 'original',
+			'image_quality'       => 82,
+			'minimum_quality'     => 65,
+			'max_width'           => 0,
+			'max_height'          => 0,
+			'auto_optimize'       => false,
+			'keep_backup'         => true,
+			'concurrency'         => 1,
+			'frontend_delivery'   => false,
+			'delivery_preference' => 'auto',
 		);
 	}
 
@@ -35,21 +37,24 @@ final class Settings {
 	 * @return array<string, mixed> Normalized setting values.
 	 */
 	public static function sanitize( $input ): array {
-		$input    = is_array( $input ) ? $input : array();
-		$defaults = self::defaults();
-		$format   = isset( $input['output_format'] ) && is_string( $input['output_format'] ) ? $input['output_format'] : '';
-		$formats  = array( 'original', 'webp', 'avif', 'both' );
-		$quality  = self::bounded_int( $input['image_quality'] ?? null, 82, 1, 100 );
+		$input      = is_array( $input ) ? $input : array();
+		$defaults   = self::defaults();
+		$format     = isset( $input['output_format'] ) && is_string( $input['output_format'] ) ? $input['output_format'] : '';
+		$formats    = array( 'original', 'webp', 'avif', 'both' );
+		$quality    = self::bounded_int( $input['image_quality'] ?? null, 82, 1, 100 );
+		$preference = isset( $input['delivery_preference'] ) && is_string( $input['delivery_preference'] ) ? $input['delivery_preference'] : '';
 
 		return array(
-			'output_format'   => in_array( $format, $formats, true ) ? $format : $defaults['output_format'],
-			'image_quality'   => $quality,
-			'minimum_quality' => min( $quality, self::bounded_int( $input['minimum_quality'] ?? null, 65, 1, 100 ) ),
-			'max_width'       => self::bounded_int( $input['max_width'] ?? null, 0, 0, 20000 ),
-			'max_height'      => self::bounded_int( $input['max_height'] ?? null, 0, 0, 20000 ),
-			'auto_optimize'   => self::normalize_boolean( $input['auto_optimize'] ?? false, false ),
-			'keep_backup'     => self::normalize_boolean( $input['keep_backup'] ?? true, true ),
-			'concurrency'     => self::bounded_int( $input['concurrency'] ?? null, 1, 1, 4 ),
+			'output_format'       => in_array( $format, $formats, true ) ? $format : $defaults['output_format'],
+			'image_quality'       => $quality,
+			'minimum_quality'     => min( $quality, self::bounded_int( $input['minimum_quality'] ?? null, 65, 1, 100 ) ),
+			'max_width'           => self::bounded_int( $input['max_width'] ?? null, 0, 0, 20000 ),
+			'max_height'          => self::bounded_int( $input['max_height'] ?? null, 0, 0, 20000 ),
+			'auto_optimize'       => self::normalize_boolean( $input['auto_optimize'] ?? false, false ),
+			'keep_backup'         => self::normalize_boolean( $input['keep_backup'] ?? true, true ),
+			'concurrency'         => self::bounded_int( $input['concurrency'] ?? null, 1, 1, 4 ),
+			'frontend_delivery'   => self::normalize_boolean( $input['frontend_delivery'] ?? false, false ),
+			'delivery_preference' => in_array( $preference, array( 'auto', 'prefer_webp', 'webp_only', 'avif_only' ), true ) ? $preference : 'auto',
 		);
 	}
 

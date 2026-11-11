@@ -1,6 +1,6 @@
-# Jocky Image Optimizer 0.5.0-beta
+# Jocky Image Optimizer 0.6.0-beta.1
 
-Jocky Image Optimizer is a self-hosted WordPress plugin for local image optimization. The first installable beta adds Media Library actions, a bounded background queue, and JPEG/PNG-to-WebP/AVIF derivatives. Original uploads and WordPress attachment metadata remain unchanged, and derivative files stay inactive for frontend delivery.
+Jocky Image Optimizer is a self-hosted WordPress plugin for local image optimization. It creates separately stored JPEG/PNG optimization and WebP/AVIF derivatives. Frontend delivery is disabled by default; when enabled, eligible derivatives are exposed with browser-native `<picture>` sources and the original WordPress `<img>` remains the fallback.
 
 The `VERSION` file is the authoritative release version. Packaging and CI reject mismatches in the plugin header, runtime constant, this title, changelog release heading, ZIP metadata, filename, or artifact name. The beta ZIP is built and tested by GitHub Actions on PHP 8.3 with WordPress 6.6.11 and 7.1.4. See [VALIDATION.md](VALIDATION.md) for current validation evidence and limitations.
 
@@ -8,7 +8,7 @@ The `VERSION` file is the authoritative release version. Packaging and CI reject
 
 Milestone 5 records source and derivative SHA-256 digests, uploads-relative paths, attachment metadata references, encoder details, and lifecycle/audit state in plugin-owned tables. Recovery verification, candidate previews, bounded legacy scans, and history are available. **Destructive per-attachment and bulk cleanup are disabled by default.** The admin UI and WP-CLI fail closed unless `JIO_ENABLE_DESTRUCTIVE_RECOVERY` is explicitly true and WordPress reports a `local` or `development` environment. This opt-in exists for disposable testing; do not enable cleanup on production or staging while WordPress core metadata/deletion paths remain outside the plugin lock. CLI cleanup also requires `--confirm`.
 
-The plugin optimizer writes separate no-clobber derivatives and does not replace originals. Cleanup previews and verification are read-only apart from registry/audit updates. Before any explicitly enabled local/development cleanup, the backend rechecks attachment existence, current metadata, expected source/derivative paths, registry ownership, active queue work, file digests and file identity, and refuses paths currently managed by WordPress as original or thumbnail files. The plugin lock cannot prevent a hostile filesystem writer from changing a path after the last check, so the uploads tree must remain writable only by trusted site processes. Missing/corrupt originals require UpdraftPlus or another verified site backup; derivatives are never used to reconstruct originals. Frontend delivery remains inactive. See [ARCHITECTURE.md](ARCHITECTURE.md) and [VALIDATION.md](VALIDATION.md) for the safety boundary and test evidence.
+The plugin optimizer writes separate no-clobber derivatives and does not replace originals. Cleanup previews and verification are read-only apart from registry/audit updates. Before any explicitly enabled local/development cleanup, the backend rechecks attachment existence, current metadata, expected source/derivative paths, registry ownership, active queue work, file digests and file identity, and refuses paths currently managed by WordPress as original or thumbnail files. The plugin lock cannot prevent a hostile filesystem writer from changing a path after the last check, so the uploads tree must remain writable only by trusted site processes. Missing/corrupt originals require UpdraftPlus or another verified site backup; derivatives are never used to reconstruct originals. Frontend delivery remains disabled until explicitly enabled in Settings. See [ARCHITECTURE.md](ARCHITECTURE.md) and [VALIDATION.md](VALIDATION.md) for the safety boundary and test evidence.
 
 ## Requirements
 
@@ -24,8 +24,8 @@ Image processing requires locally installed `jpegtran`, `djpeg` plus MozJPEG-com
 
 ## Install the beta from the WordPress Dashboard
 
-1. Open the successful release CI run linked in [VALIDATION.md](VALIDATION.md), then download the `jocky-image-optimizer-0.5.0-beta` artifact.
-2. Extract the downloaded Actions artifact archive. It contains the installable `jocky-image-optimizer-0.5.0-beta.zip`.
+1. After the Milestone 6 GitHub Actions run succeeds, download the `jocky-image-optimizer-0.6.0-beta.1` artifact from that run. The artifact is not available until the run completes successfully.
+2. Extract the downloaded Actions artifact archive. It contains the installable `jocky-image-optimizer-0.6.0-beta.1.zip`.
 3. In WordPress, open **Plugins → Add New Plugin → Upload Plugin**, select that inner plugin ZIP, and click **Install Now**.
 4. Click **Activate Plugin** after installation completes.
 5. Open **Image Optimizer** to review encoder availability and queue progress. Open **Image Optimizer → Settings** to choose output formats and other settings.
@@ -36,13 +36,19 @@ Activation creates the versioned queue tables and initializes the scanner and wo
 
 For development, run `composer install --no-interaction`. To produce the release ZIP, run `composer install --no-dev --no-interaction --optimize-autoloader`, then `php scripts/package.php` and `php scripts/validate-package.php`. The output is `build/jocky-image-optimizer-$(cat VERSION).zip`; it has exactly one `jocky-image-optimizer/` top-level directory, includes the matching `VERSION` metadata and production Composer autoloader, and excludes development tools. Build artifacts are excluded from Git. See [RELEASING.md](RELEASING.md) for the version bump and release workflow.
 
-For staging, take a database and uploads backup first. The plugin writes separate derivatives and does not swap frontend URLs, replace media, or change Elementor markup. Review the prerequisites and known limitations below before queueing work.
+For staging, take a database and uploads backup first. The plugin writes separate derivatives and does not replace media or change Elementor CSS/background markup. Review the prerequisites and known limitations below before enabling frontend delivery or queueing work.
 
 ## Current behavior
 
 Settings are registered through the WordPress Settings API, capability-gated with `manage_options`, nonce-protected by `settings_fields()`, and sanitized on save. Automatic optimization is off by default. The Media Library row action can queue a selected attachment, and the dashboard can scan the library in pages, pause/resume, cancel pending jobs, retry failures, and show persisted results. Queue rows and worker/scanner leases are stored in prefixed InnoDB tables; schema versioning runs on activation and subsequent plugin loads. WP-Cron processes one job per tick and depends on site traffic unless an external scheduler calls WordPress cron. For controlled execution, use `wp jio worker run --batch-size=10` from WP-CLI. The concurrency setting caps simultaneous workers at four and defaults to one. See `ARCHITECTURE.md` and `VALIDATION.md` for implementation and verification status.
 
-The optional upload hook only enqueues after WordPress generates attachment metadata; it does not process images in the upload request. Eligible local JPEG/PNG originals and registered sizes are processed into separate `.jio.webp`/`.jio.avif` derivatives, recorded as hidden plugin-owned attachment metadata, and left inactive for frontend delivery. `_wp_attached_file`, core image metadata, source files, and thumbnails are not replaced. Attachments whose effective file path is filtered/offloaded or outside the current uploads root are skipped. No Cloudflare R2 compatibility is claimed.
+The optional upload hook only enqueues after WordPress generates attachment metadata; it does not process images in the upload request. Eligible local JPEG/PNG originals and registered sizes are processed into separate `.jio.webp`/`.jio.avif` derivatives. `_wp_attached_file`, core image metadata, source files, and thumbnails are not replaced. Attachments whose effective file path is filtered/offloaded or outside the current uploads root are skipped. No Cloudflare R2 compatibility is claimed.
+
+### Frontend delivery beta
+
+After installing this release, open **Image Optimizer → Settings** and explicitly enable **Frontend delivery**. It defaults to OFF. Select Auto (AVIF, then WebP), Prefer WebP, WebP only, or AVIF only; every selection retains the original image fallback. The module filters WordPress attachment images and core-recognized post-content image tags, uses a bounded request-local derivative lookup, and returns unchanged markup for uncertain ownership, missing files, active optimization, or mismatched sources. Legacy registry records without the new lightweight file identity remain unserved until regenerated. Elementor Image and Image Box output is supported when it delegates to WordPress image APIs; no Elementor-specific runtime dependency is added. CSS backgrounds, Elementor-generated CSS, offloaded media, and arbitrary HTML are not rewritten.
+
+Changing delivery settings and registering the first derivative in a worker request calls WP Rocket's documented full-domain purge API when available, then shows a notice to purge Cloudflare or other external caches manually. If WP Rocket is absent, output continues normally. Browser-native picture selection does not vary HTML by User-Agent. Disabling delivery affects uncached responses immediately; external cached HTML may persist until purged. Registry totals and optimization byte deltas are not measured visitor bandwidth savings.
 
 ```php
 use Jocky\ImageOptimizer\Optimization\OptimizationRequest;
@@ -111,7 +117,7 @@ The installer puts WordPress core and test files under `TMPDIR`; remove that uni
 
 ## Security and scope
 
-The processing API executes only known local encoder binaries using argument arrays, never shell command strings. It does not install tools or accept executable paths from request data. Cross-format conversion rejects EXIF-bearing sources because orientation cannot be guaranteed; other detected metadata requires an explicit opt-out and may be stripped. APNG and animated WebP/AVIF are rejected. AVIF structural validation checks bounded ISO-BMFF box structure and primary dimensions; independent decoder acceptance is an integration-test check, not runtime verification. Runtime validation cannot establish perceptual equivalence. Cloudflare R2, offloaded storage, frontend URL replacement, Elementor markup changes, automatic cron setup, backup/restoration, and multisite validation are not included in this beta.
+The processing API executes only known local encoder binaries using argument arrays, never shell command strings. It does not install tools or accept executable paths from request data. Cross-format conversion rejects EXIF-bearing sources because orientation cannot be guaranteed; other detected metadata requires an explicit opt-out and may be stripped. APNG and animated WebP/AVIF are rejected. AVIF structural validation checks bounded ISO-BMFF box structure and primary dimensions; independent decoder acceptance is an integration-test check, not runtime verification. Runtime validation cannot establish perceptual equivalence. Cloudflare R2, offloaded storage, arbitrary HTML rewriting, Elementor CSS/background delivery, automatic cron setup, backup/restoration, and multisite validation are not included in this beta. Frontend `<picture>` delivery is available as an explicit default-off setting.
 
 ## License
 

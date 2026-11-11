@@ -15,7 +15,7 @@ namespace Jocky\ImageOptimizer\Queue;
 /** Creates queue tables through WordPress's versioned dbDelta migration API. */
 final class QueueSchema {
 
-	public const VERSION = 2;
+	public const VERSION = 3;
 	public const OPTION  = 'jio_queue_schema_version';
 
 	/** Runs the controlled migration only when the stored schema version is old. */
@@ -93,6 +93,7 @@ final class QueueSchema {
 			derivative_relative_path varchar(512) NOT NULL,
 			output_format varchar(20) NOT NULL,
 			derivative_sha256 char(64) NOT NULL,
+			derivative_identity varchar(160) NULL,
 			input_bytes bigint(20) unsigned NOT NULL,
 			output_bytes bigint(20) unsigned NOT NULL,
 			encoder_id varchar(32) NOT NULL,
@@ -157,7 +158,7 @@ final class QueueSchema {
 				'indexes' => array( 'PRIMARY' ),
 			),
 			self::derivatives_table() => array(
-				'columns' => array( 'id', 'record_key', 'attachment_id', 'variant_key', 'source_relative_path', 'source_mime', 'source_bytes', 'source_sha256', 'source_fingerprint', 'metadata_hash', 'derivative_relative_path', 'output_format', 'derivative_sha256', 'input_bytes', 'output_bytes', 'encoder_id', 'encoder_parameters', 'validation_status', 'lifecycle_status', 'created_at', 'updated_at' ),
+				'columns' => array( 'id', 'record_key', 'attachment_id', 'variant_key', 'source_relative_path', 'source_mime', 'source_bytes', 'source_sha256', 'source_fingerprint', 'metadata_hash', 'derivative_relative_path', 'output_format', 'derivative_sha256', 'derivative_identity', 'input_bytes', 'output_bytes', 'encoder_id', 'encoder_parameters', 'validation_status', 'lifecycle_status', 'created_at', 'updated_at' ),
 				'indexes' => array( 'PRIMARY', 'record_key', 'attachment_status', 'status_id' ),
 			),
 			self::events_table()      => array(

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.0-beta.1 — Milestone 6 frontend delivery
+
+- Add default-off browser-native `<picture>` delivery using active registry-owned WebP/AVIF derivatives with matching sources, metadata, expected names, file MIME, size, and stored file identity. Original WordPress `<img>` markup remains the fallback.
+- Add an additive schema migration for derivative file identity; pre-existing records without identity fail back to original markup until recreated by the current optimizer.
+- Add responsive same-aspect candidate sets, administrator format preferences, a read-only registry summary, WP Rocket domain purge when its documented function exists, and manual Cloudflare purge guidance.
+- Add packaged WordPress integration coverage for off/on behavior, WebP, AVIF/WebP order, retained original attributes/srcset, and rollback. Background CSS, offloaded media, and unverified legacy derivatives remain unsupported.
+- Version target 0.6.0-beta.1; validation status is pending the Milestone 6 CI run.
+
 ## 0.5.0-beta — Milestone 5 beta
 
 - Establish root `VERSION` as the authoritative semantic version and align the WordPress header, runtime constant, README, package metadata, generated ZIP filename, and GitHub Actions artifact name.

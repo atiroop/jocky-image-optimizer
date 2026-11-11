@@ -99,7 +99,7 @@ $assert   = static function ( bool $condition, string $message ) use ( &$failure
 require_once dirname( __DIR__ ) . '/scripts/package-version.php';
 $repository_root = dirname( __DIR__ );
 $release_version = jio_package_version( $repository_root );
-$assert( '0.5.0-beta' === $release_version, 'authoritative VERSION matches plugin, README, and changelog metadata' );
+$assert( '0.6.0-beta.1' === $release_version, 'authoritative VERSION matches plugin, README, and changelog metadata' );
 $assert( version_compare( $release_version, '0.4.0-beta', '>' ), 'native version comparison recognizes the new plugin as newer than the installed beta' );
 $assert( version_compare( '0.6.0-beta.1', '0.6.0-beta.2', '<' ) && version_compare( '0.6.0-beta.2', '0.6.0', '<' ), 'native version comparison orders beta prereleases below later prereleases and stable release' );
 $metadata_fixture = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'jio-version-fixture-' . bin2hex( random_bytes( 8 ) );
@@ -123,6 +123,7 @@ $assert( $metadata_mismatch_rejected, 'release metadata validation rejects an in
 $defaults = Settings::defaults();
 $assert( $defaults['concurrency'] === 1, 'default worker concurrency is bounded to one' );
 $assert( $defaults['output_format'] === 'original', 'default output preserves original format' );
+$assert( false === $defaults['frontend_delivery'] && 'auto' === $defaults['delivery_preference'], 'frontend delivery defaults off with safe automatic format preference' );
 
 $settings = Settings::sanitize(
 	array(
@@ -135,6 +136,7 @@ $settings = Settings::sanitize(
 	)
 );
 $assert( $settings['output_format'] === 'original', 'invalid output format uses safe default' );
+$assert( false === $settings['frontend_delivery'] && 'auto' === $settings['delivery_preference'], 'invalid or missing delivery controls stay safe and disabled' );
 $assert( $settings['image_quality'] === 100, 'quality is capped at 100' );
 $assert( $settings['max_width'] === 0 && $settings['max_height'] === 640, 'dimensions are sanitized and bounded' );
 $assert( $settings['auto_optimize'] === true && $settings['keep_backup'] === true, 'checkbox values are normalized safely' );

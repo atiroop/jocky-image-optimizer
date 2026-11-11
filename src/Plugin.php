@@ -10,6 +10,8 @@ declare(strict_types=1);
 namespace Jocky\ImageOptimizer;
 
 use Jocky\ImageOptimizer\Admin\AdminPages;
+use Jocky\ImageOptimizer\Delivery\DeliveryCache;
+use Jocky\ImageOptimizer\Delivery\FrontendDelivery;
 use Jocky\ImageOptimizer\Media\MediaIntegration;
 use Jocky\ImageOptimizer\Queue\BulkScanner;
 use Jocky\ImageOptimizer\Queue\JobRepository;
@@ -35,6 +37,8 @@ final class Plugin {
 		$bulk->register();
 		$recovery_worker->register();
 		( new MediaIntegration( $jobs, $worker ) )->register();
+		( new FrontendDelivery() )->register();
+		( new DeliveryCache() )->register();
 		if ( is_admin() ) {
 			( new AdminPages( new CapabilityDetector(), $jobs, $bulk, $worker, $recovery, $recovery_worker ) )->register();
 		}
