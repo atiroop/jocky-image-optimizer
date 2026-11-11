@@ -122,6 +122,7 @@ async function inspectLoadedImage(page, selector, expectedMime, responses, expec
     nestedPictures: document.querySelectorAll('picture picture').length,
     picture: img.closest('picture')?.outerHTML || '',
   }));
+  console.log(`Browser stage D for ${selector}: ${JSON.stringify({ attributes: result.attributes, currentSrc: result.currentSrc, mime: responses.get(result.currentSrc)?.mime, naturalWidth: result.naturalWidth, naturalHeight: result.naturalHeight })}`);
   assert.ok(result.naturalWidth > 0 && result.naturalHeight > 0, 'The browser decoded a non-empty image.');
   assert.ok(result.width > 0 && result.height > 0, 'Intrinsic display dimensions are present.');
   assert.ok(result.alt.length > 0, 'Accessible alt text is preserved.');
@@ -153,7 +154,6 @@ async function inspectLoadedImage(page, selector, expectedMime, responses, expec
     assert.ok(result.currentSrc.includes('.jio.'), 'The loaded image must be a registered derivative URL.');
     assert.ok(result.picture.includes(`type="${expectedMime}"`), 'The picture contains the selected format source.');
   }
-  console.log(`Browser stage D for ${selector}: ${JSON.stringify({ attributes: result.attributes, currentSrc: result.currentSrc, mime: responses.get(result.currentSrc)?.mime, naturalWidth: result.naturalWidth, naturalHeight: result.naturalHeight })}`);
   console.log(`Loaded ${expectedOriginal ? 'original' : expectedMime}: ${result.currentSrc} (${result.naturalWidth}x${result.naturalHeight})`);
   return result;
 }
@@ -245,8 +245,6 @@ try {
     assert.ok(elementor.trace.some((entry) => entry.name === 'image-box'));
     const png = await inspectLoadedImage(page, '[data-id="jioimg1"] img', 'image/png', responses, true, 'png', 'elementor-png');
     const jpeg = await inspectLoadedImage(page, '[data-id="jioibox1"] img', 'image/jpeg', responses, true, 'jpeg', 'elementor-jpeg');
-    attributeBaselines.set('elementor-png', png.attributes);
-    attributeBaselines.set('elementor-jpeg', jpeg.attributes);
   });
   state = await control({ operation: 'settings', enabled: 1, preference: 'auto' });
   assert.equal(state.frontend_delivery, true);
