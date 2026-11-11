@@ -17,6 +17,9 @@ add_filter(
 );
 
 $GLOBALS['jio_browser_registry_queries'] = 0;
+$GLOBALS['jio_browser_attachment_filter_calls'] = array();
+$GLOBALS['jio_browser_elementor_trace'] = array();
+$GLOBALS['jio_browser_elementor_trace_indexes'] = array();
 
 add_filter(
 	'wp_get_attachment_image_attributes',
@@ -42,6 +45,7 @@ add_filter(
 	static function ( $html, $attachment_id ) {
 		$ids = get_option( 'jio_browser_attachments', array() );
 		if ( in_array( (int) $attachment_id, array_map( 'intval', (array) $ids ), true ) ) {
+			$GLOBALS['jio_browser_attachment_filter_calls'][ (int) $attachment_id ] = ( $GLOBALS['jio_browser_attachment_filter_calls'][ (int) $attachment_id ] ?? 0 ) + 1;
 			$GLOBALS['jio_browser_pre_delivery'][ (int) $attachment_id ] = $html;
 		}
 		return $html;
@@ -50,6 +54,63 @@ add_filter(
 	2
 );
 $GLOBALS['jio_browser_pre_delivery'] = array();
+$GLOBALS['jio_browser_post_delivery'] = array();
+
+add_filter(
+	'wp_get_attachment_image',
+	static function ( $html, $attachment_id ) {
+		$ids = get_option( 'jio_browser_attachments', array() );
+		if ( in_array( (int) $attachment_id, array_map( 'intval', (array) $ids ), true ) ) {
+			$GLOBALS['jio_browser_post_delivery'][ (int) $attachment_id ] = $html;
+		}
+		return $html;
+	},
+	21,
+	2
+);
+
+add_filter(
+	'elementor/widget/render_content',
+	static function ( $content, $widget ) {
+		if ( ! is_object( $widget ) || ! method_exists( $widget, 'get_name' ) || ! method_exists( $widget, 'get_settings_for_display' ) || ! in_array( $widget->get_name(), array( 'image', 'image-box' ), true ) ) {
+			return $content;
+		}
+		$settings       = $widget->get_settings_for_display();
+		$attachment_id  = is_array( $settings ) && is_array( $settings['image'] ?? null ) ? (int) ( $settings['image']['id'] ?? 0 ) : 0;
+		$trace_index    = count( $GLOBALS['jio_browser_elementor_trace'] );
+		$image_tag      = class_exists( '\\WP_HTML_Tag_Processor' ) ? new WP_HTML_Tag_Processor( $content ) : null;
+		$image_found    = $image_tag instanceof WP_HTML_Tag_Processor && $image_tag->next_tag( 'IMG' );
+		$GLOBALS['jio_browser_elementor_trace'][] = array(
+			'name'                   => $widget->get_name(),
+			'attachment_id'          => $attachment_id,
+			'wp_image_filter_calls'  => $GLOBALS['jio_browser_attachment_filter_calls'][ $attachment_id ] ?? 0,
+			'picture_after_wp_filter' => str_contains( (string) ( $GLOBALS['jio_browser_post_delivery'][ $attachment_id ] ?? '' ), '<picture' ),
+			'picture_before_adapter' => str_contains( $content, '<picture' ),
+			'img_src_before_adapter' => $image_found ? $image_tag->get_attribute( 'src' ) : null,
+			'img_class_before_adapter' => $image_found ? $image_tag->get_attribute( 'class' ) : null,
+			'picture_after_adapter'  => false,
+		);
+		$GLOBALS['jio_browser_elementor_trace_indexes'][ spl_object_id( $widget ) ] = $trace_index;
+		return $content;
+	},
+	10,
+	2
+);
+
+add_filter(
+	'elementor/widget/render_content',
+	static function ( $content, $widget ) {
+		if ( is_object( $widget ) && isset( $GLOBALS['jio_browser_elementor_trace_indexes'][ spl_object_id( $widget ) ] ) ) {
+			$index = $GLOBALS['jio_browser_elementor_trace_indexes'][ spl_object_id( $widget ) ];
+			if ( isset( $GLOBALS['jio_browser_elementor_trace'][ $index ] ) ) {
+				$GLOBALS['jio_browser_elementor_trace'][ $index ]['picture_after_adapter'] = str_contains( $content, '<picture' );
+			}
+		}
+		return $content;
+	},
+	30,
+	2
+);
 
 register_shutdown_function(
 	static function () {
@@ -86,6 +147,7 @@ add_action(
 			header( 'Content-Type: text/html; charset=UTF-8' );
 			header( 'Cache-Control: no-store, no-cache, must-revalidate, max-age=0' );
 			header( 'X-JIO-Elementor-Version: ' . rawurlencode( (string) ELEMENTOR_VERSION ) );
+			header( 'X-JIO-Elementor-Trace: ' . base64_encode( (string) wp_json_encode( $GLOBALS['jio_browser_elementor_trace'] ) ) );
 			header( 'X-JIO-Registry-Lookups: ' . (int) $GLOBALS['jio_browser_registry_queries'] );
 			echo '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>JIO Elementor fixture</title></head><body>' . $markup . '</body></html>';
 			exit;

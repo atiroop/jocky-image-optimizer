@@ -172,7 +172,10 @@ async function openElementor(page, responses) {
   const lookupCount = Number(response.headers()['x-jio-registry-lookups']);
   assert.ok(Number.isFinite(lookupCount) && lookupCount <= 8, `Frontend derivative registry queries are bounded; saw ${lookupCount}.`);
   assert.ok(!response.request().url().includes('wp-admin'), 'Elementor rendering occurs on a frontend request.');
-  return responses;
+  const traceHeader = response.headers()['x-jio-elementor-trace'] || '';
+  assert.ok(traceHeader, 'Elementor runtime instrumentation returned its widget path trace.');
+  const trace = JSON.parse(Buffer.from(traceHeader, 'base64').toString('utf8'));
+  return { responses, trace };
 }
 
 try {
@@ -221,12 +224,20 @@ try {
   });
 
   await withPage({ width: 1280, height: 900 }, async (page, responses) => {
-    await openElementor(page, responses);
+    const { trace } = await openElementor(page, responses);
+    console.log(`Elementor widget rendering trace: ${JSON.stringify(trace)}`);
+    for (const [name, asset] of [['image', 'png'], ['image-box', 'jpeg']]) {
+      const widgetTrace = trace.find((entry) => entry.name === name && Number(entry.attachment_id) === Number(fixture.attachments[asset].id));
+      assert.ok(widgetTrace, `Elementor ${name} rendering trace resolves the actual ${asset} attachment ID.`);
+      assert.equal(widgetTrace.img_src_before_adapter, new URL(fixture.attachments[asset].url).href, `Elementor ${name} output uses the selected WordPress attachment source.`);
+      assert.equal(widgetTrace.picture_after_adapter, true, `The public widget content adapter adds a picture wrapper for ${name}.`);
+    }
     const imageWidget = await inspectLoadedImage(page, '[data-id="jioimg1"] img', 'image/avif', responses, false, 'png', 'elementor-png');
     const imageBox = await inspectLoadedImage(page, '[data-id="jioibox1"] img', 'image/avif', responses, false, 'jpeg', 'elementor-jpeg');
     assert.ok(imageWidget.currentSrc.endsWith('.jio.avif'));
     assert.ok(imageBox.currentSrc.endsWith('.jio.avif'));
     assert.equal(await page.locator('[data-id="jioimg1"] a').getAttribute('href'), `${baseUrl}/elementor-image-target/`);
+    assert.equal(await page.locator('[data-id="jioibox1"] a').getAttribute('href'), `${baseUrl}/elementor-box-target/`);
     assert.match(await page.locator('[data-id="jioimg1"]').innerText(), /JIO Elementor image caption/);
     assert.match(await page.locator('[data-id="jioibox1"]').innerText(), /JIO Elementor Image Box/);
     const background = await page.locator('[data-id="jiobg01"]').evaluate((element) => ({
@@ -248,6 +259,13 @@ try {
     await inspectLoadedImage(page, elementSelector('jpeg'), 'image/webp', responses);
     assert.equal(await page.locator('source[type="image/avif"]').count(), 0);
   });
+  await withPage({ width: 1280, height: 900 }, async (page, responses) => {
+    await openElementor(page, responses);
+    await inspectLoadedImage(page, '[data-id="jioimg1"] img', 'image/webp', responses, false, 'png', 'elementor-png');
+    await inspectLoadedImage(page, '[data-id="jioibox1"] img', 'image/webp', responses, false, 'jpeg', 'elementor-jpeg');
+    assert.equal(await page.locator('source[type="image/avif"]').count(), 0);
+  });
+  await control({ operation: 'settings', enabled: 1, preference: 'auto' });
 
   // A stale current-file identity is rejected and the original PNG is loaded.
   state = await control({ operation: 'stale', asset: 'png' });

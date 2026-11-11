@@ -37,6 +37,95 @@ final class FrontendDelivery {
 	public function register(): void {
 		add_filter( 'wp_get_attachment_image', array( $this, 'attachment_image' ), 20, 5 );
 		add_filter( 'wp_content_img_tag', array( $this, 'content_image' ), 20, 3 );
+		// Elementor sanitizes image helper output inside some widgets, stripping
+		// <picture>/<source> tags. This public hook runs after widget rendering.
+		add_filter( 'elementor/widget/render_content', array( $this, 'elementor_widget_content' ), 20, 2 );
+	}
+
+	/** Adds delivery sources after Elementor has sanitized supported widget output.
+	 *
+	 * Elementor Image and Image Box widgets may sanitize wp_get_attachment_image()
+	 * output with wp_kses_post(), which removes picture/source wrappers. This
+	 * adapter runs on Elementor's documented final widget-content filter and
+	 * reuses the same identity-checked renderer as WordPress image markup.
+	 *
+	 * @param string $content Widget HTML after its render method.
+	 * @param mixed  $widget  Elementor widget instance.
+	 * @return string Filtered widget HTML.
+	 */
+	public function elementor_widget_content( string $content, $widget ): string {
+		if ( is_admin() || ! is_object( $widget ) || ! method_exists( $widget, 'get_name' ) || ! method_exists( $widget, 'get_settings_for_display' ) ) {
+			return $content;
+		}
+		$widget_name = $widget->get_name();
+		if ( ! in_array( $widget_name, array( 'image', 'image-box' ), true ) || str_contains( $content, '<picture' ) ) {
+			return $content;
+		}
+		$settings = $widget->get_settings_for_display();
+		if ( ! is_array( $settings ) || ! is_array( $settings['image'] ?? null ) ) {
+			return $content;
+		}
+		$attachment_id = (int) ( $settings['image']['id'] ?? 0 );
+		if ( $attachment_id < 1 || 'attachment' !== get_post_type( $attachment_id ) || ! wp_attachment_is_image( $attachment_id ) ) {
+			return $content;
+		}
+		$mime = get_post_mime_type( $attachment_id );
+		if ( ! in_array( $mime, array( 'image/jpeg', 'image/png' ), true ) ) {
+			return $content;
+		}
+		$size_control = 'image' === $widget_name ? 'image_size' : 'thumbnail_size';
+		$size         = $settings[ $size_control ] ?? 'full';
+		if ( 'custom' === $size ) {
+			$custom = $settings[ $size_control . '_custom_dimension' ] ?? array();
+			if ( ! is_array( $custom ) || empty( $custom['width'] ) || empty( $custom['height'] ) ) {
+				return $content;
+			}
+			$size = array( (int) $custom['width'], (int) $custom['height'] );
+		}
+		if ( ! is_string( $size ) && ! is_array( $size ) ) {
+			return $content;
+		}
+		if ( ! class_exists( '\\WP_HTML_Tag_Processor' ) ) {
+			return $content;
+		}
+		if ( 1 !== preg_match( '/<img\b[^>]*>/i', $content, $image_match, PREG_OFFSET_CAPTURE ) ) {
+			return $content;
+		}
+		$image_html = $image_match[0][0];
+		$offset     = $image_match[0][1];
+		if ( ! $this->elementor_markup_matches_attachment( $image_html, $attachment_id, $size ) ) {
+			return $content;
+		}
+		$image_tag = new \WP_HTML_Tag_Processor( $image_html );
+		if ( $image_tag->next_tag( 'IMG' ) && $image_tag->get_attribute( 'data-jio-delivery' ) ) {
+			$image_tag->remove_attribute( 'data-jio-delivery' );
+			$clean_image = $image_tag->get_updated_html();
+			if ( is_string( $clean_image ) && '' !== $clean_image ) {
+				$image_html = $clean_image;
+			}
+		}
+		$picture = $this->deliver( $image_html, $attachment_id, $size, false );
+		if ( $picture === $image_html || ! str_contains( $picture, '<picture>' ) ) {
+			return $content;
+		}
+		return substr_replace( $content, $picture, $offset, strlen( $image_match[0][0] ) );
+	}
+
+	/** Ensures Elementor's image source belongs to its claimed attachment.
+	 *
+	 * @param string       $content       Widget HTML.
+	 * @param int          $attachment_id Selected attachment ID.
+	 * @param string|int[] $size          Elementor's selected image size.
+	 * @return bool Whether the first image uses the expected WordPress source.
+	 */
+	private function elementor_markup_matches_attachment( string $content, int $attachment_id, $size ): bool {
+		$tag = new \WP_HTML_Tag_Processor( $content );
+		if ( ! $tag->next_tag( 'IMG' ) ) {
+			return false;
+		}
+		$source   = $tag->get_attribute( 'src' );
+		$expected = wp_get_attachment_image_src( $attachment_id, $size );
+		return is_string( $source ) && is_array( $expected ) && isset( $expected[0] ) && hash_equals( (string) $expected[0], $source );
 	}
 
 	/** Filters markup created by the WordPress attachment image API.

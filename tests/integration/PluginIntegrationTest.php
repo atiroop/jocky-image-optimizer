@@ -552,6 +552,33 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 		$this->assertStringContainsString( 'decoding="async"', $picture );
 		$this->assertStringContainsString( 'class="example"', $picture );
 		$this->assertStringContainsString( 'sizes=', $picture );
+		$sanitized_elementor_html = wp_kses_post( '<figure class="elementor-image"><a href="https://example.test/image-target/">' . $picture . '</a><figcaption>Image caption</figcaption></figure>' );
+		$this->assertStringNotContainsString( '<picture>', $sanitized_elementor_html, 'Elementor-style post-render sanitization strips the early picture wrapper.' );
+		$image_widget = new class( $attachment_id ) {
+			private int $attachment_id;
+
+			public function __construct( int $attachment_id ) {
+				$this->attachment_id = $attachment_id;
+			}
+
+			public function get_name(): string {
+				return 'image';
+			}
+
+			public function get_settings_for_display(): array {
+				return array(
+					'image'      => array( 'id' => $this->attachment_id ),
+					'image_size' => 'full',
+				);
+			}
+		};
+		$elementor_picture = $delivery->elementor_widget_content( $sanitized_elementor_html, $image_widget );
+		$this->assertStringContainsString( '<picture>', $elementor_picture, 'The documented Elementor widget-content adapter restores verified picture sources after sanitization.' );
+		$this->assertStringContainsString( 'type="image/webp"', $elementor_picture );
+		$this->assertStringContainsString( 'src="' . esc_url( wp_get_attachment_image_url( $attachment_id, 'full' ) ) . '"', $elementor_picture );
+		$this->assertStringContainsString( '<a href="https://example.test/image-target/">', $elementor_picture, 'The original Elementor link is retained.' );
+		$this->assertStringContainsString( '<figcaption>Image caption</figcaption>', $elementor_picture, 'The original Elementor caption is retained outside picture markup.' );
+		$this->assertLessThan( strpos( $elementor_picture, '<picture>' ), strpos( $elementor_picture, '<figcaption>' ), 'Picture markup remains scoped to the image and does not wrap its caption.' );
 		$content_picture = $delivery->content_image( $delivery_input, 'the_content', $attachment_id );
 		$this->assertStringContainsString( '<picture>', $content_picture, 'core-recognized content image receives the same safe delivery wrapper' );
 		$this->assertStringContainsString( 'src="' . esc_url( wp_get_attachment_image_url( $attachment_id, 'full' ) ) . '"', $content_picture );
