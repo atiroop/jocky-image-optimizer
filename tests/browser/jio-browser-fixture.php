@@ -81,7 +81,11 @@ add_filter(
 		$image_tag      = class_exists( '\\WP_HTML_Tag_Processor' ) ? new WP_HTML_Tag_Processor( $content ) : null;
 		$image_found    = $image_tag instanceof WP_HTML_Tag_Processor && $image_tag->next_tag( 'IMG' );
 		$baseline_attributes = array();
+		$image_markup_before = '';
 		if ( $image_found ) {
+			if ( preg_match( '/<img\b[^>]*>/i', $content, $image_match ) ) {
+				$image_markup_before = $image_match[0];
+			}
 			foreach ( array( 'src', 'srcset', 'sizes', 'width', 'height', 'alt', 'loading', 'decoding', 'fetchpriority', 'class', 'data-jio-browser-fixture' ) as $attribute_name ) {
 				$attribute_value = $image_tag->get_attribute( $attribute_name );
 				if ( null !== $attribute_value ) {
@@ -98,6 +102,9 @@ add_filter(
 			'img_src_before_adapter' => $image_found ? $image_tag->get_attribute( 'src' ) : null,
 			'img_class_before_adapter' => $image_found ? $image_tag->get_attribute( 'class' ) : null,
 			'img_attributes_before_adapter' => $baseline_attributes,
+			'img_markup_before_adapter' => $image_markup_before,
+			'img_attributes_after_adapter' => array(),
+			'img_markup_after_adapter' => '',
 			'picture_after_adapter'  => false,
 		);
 		$GLOBALS['jio_browser_elementor_trace_indexes'][ spl_object_id( $widget ) ] = $trace_index;
@@ -114,6 +121,20 @@ add_filter(
 			$index = $GLOBALS['jio_browser_elementor_trace_indexes'][ spl_object_id( $widget ) ];
 			if ( isset( $GLOBALS['jio_browser_elementor_trace'][ $index ] ) ) {
 				$GLOBALS['jio_browser_elementor_trace'][ $index ]['picture_after_adapter'] = str_contains( $content, '<picture' );
+				$after_tag = class_exists( '\\WP_HTML_Tag_Processor' ) ? new WP_HTML_Tag_Processor( $content ) : null;
+				if ( $after_tag instanceof WP_HTML_Tag_Processor && $after_tag->next_tag( 'IMG' ) ) {
+					$after_attributes = array();
+					foreach ( array( 'src', 'srcset', 'sizes', 'width', 'height', 'alt', 'loading', 'decoding', 'fetchpriority', 'class', 'data-jio-browser-fixture' ) as $attribute_name ) {
+						$attribute_value = $after_tag->get_attribute( $attribute_name );
+						if ( null !== $attribute_value ) {
+							$after_attributes[ $attribute_name ] = $attribute_value;
+						}
+					}
+					$GLOBALS['jio_browser_elementor_trace'][ $index ]['img_attributes_after_adapter'] = $after_attributes;
+				}
+				if ( preg_match( '/<img\b[^>]*>/i', $content, $image_match ) ) {
+					$GLOBALS['jio_browser_elementor_trace'][ $index ]['img_markup_after_adapter'] = $image_match[0];
+				}
 			}
 		}
 		return $content;

@@ -129,7 +129,11 @@ async function inspectLoadedImage(page, selector, expectedMime, responses, expec
   const baseline = attributeBaselines.get(baselineKey || asset);
   if (baseline) {
     for (const name of preservedAttributes) {
-      assert.equal(result.attributes?.[name] ?? null, baseline[name] ?? null, `WordPress ${name} behavior is preserved by JIO.`);
+      assert.equal(
+        result.attributes?.[name] ?? null,
+        baseline[name] ?? null,
+        `Renderer-provided ${name} behavior is preserved by JIO. Expected ${JSON.stringify(baseline[name] ?? null)}; got ${JSON.stringify(result.attributes?.[name] ?? null)}.`
+      );
     }
   }
   assert.equal(result.nestedPictures, 0, 'Delivery must never nest picture wrappers.');
@@ -149,6 +153,7 @@ async function inspectLoadedImage(page, selector, expectedMime, responses, expec
     assert.ok(result.currentSrc.includes('.jio.'), 'The loaded image must be a registered derivative URL.');
     assert.ok(result.picture.includes(`type="${expectedMime}"`), 'The picture contains the selected format source.');
   }
+  console.log(`Browser stage D for ${selector}: ${JSON.stringify({ attributes: result.attributes, currentSrc: result.currentSrc, mime: responses.get(result.currentSrc)?.mime, naturalWidth: result.naturalWidth, naturalHeight: result.naturalHeight })}`);
   console.log(`Loaded ${expectedOriginal ? 'original' : expectedMime}: ${result.currentSrc} (${result.naturalWidth}x${result.naturalHeight})`);
   return result;
 }
@@ -175,6 +180,7 @@ async function openElementor(page, responses) {
   const traceHeader = response.headers()['x-jio-elementor-trace'] || '';
   assert.ok(traceHeader, 'Elementor runtime instrumentation returned its widget path trace.');
   const trace = JSON.parse(Buffer.from(traceHeader, 'base64').toString('utf8'));
+  console.log(`Elementor widget HTML stages B/C: ${JSON.stringify(trace.map((entry) => ({ name: entry.name, attachment_id: entry.attachment_id, before: entry.img_markup_before_adapter, after: entry.img_markup_after_adapter })))}`);
   attributeBaselines.delete('elementor-png');
   attributeBaselines.delete('elementor-jpeg');
   for (const entry of trace) {
@@ -183,7 +189,18 @@ async function openElementor(page, responses) {
       : Number(entry.attachment_id) === Number(fixture.attachments.jpeg.id)
         ? 'elementor-jpeg'
         : null;
-    if (key && entry.img_attributes_before_adapter) attributeBaselines.set(key, entry.img_attributes_before_adapter);
+    if (key && entry.img_attributes_before_adapter) {
+      attributeBaselines.set(key, entry.img_attributes_before_adapter);
+      if (entry.img_attributes_after_adapter) {
+        for (const name of preservedAttributes) {
+          assert.equal(
+            entry.img_attributes_after_adapter[name] ?? null,
+            entry.img_attributes_before_adapter[name] ?? null,
+            `Elementor ${entry.name} pre-JIO and post-JIO ${name} match for attachment ${entry.attachment_id}.`
+          );
+        }
+      }
+    }
   }
   const elementCache = response.headers()['x-jio-elementor-element-cache'];
   const documentCache = response.headers()['x-jio-elementor-document-cache'];
@@ -329,6 +346,9 @@ try {
   // Simulate a genuine legacy registry record, verify fallback, then regenerate through the queue worker.
   state = await control({ operation: 'legacy', asset: 'jpeg' });
   assert.ok(state.derivative_identities.every((identity) => identity === ''), 'Legacy test rows have no current file identity.');
+  await withPage({ width: 1280, height: 900 }, async (page) => {
+    await recordWordPressBaseline(page, 'jpeg');
+  });
   await withPage({ width: 1280, height: 900 }, async (page, responses) => {
     await openElementor(page, responses);
     await inspectLoadedImage(page, '[data-id="jioibox1"] img', 'image/jpeg', responses, true, 'jpeg');
