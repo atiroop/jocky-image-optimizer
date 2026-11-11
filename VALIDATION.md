@@ -1,16 +1,29 @@
 # Validation
 
-## Milestone 6 Elementor Element Cache closure (current changes)
+## Milestone 6 final browser and Elementor acceptance
 
-Validation is pending for the focused cache-compatibility changes; no result is claimed until the feature-branch workflow completes. The prior browser run [42956164775](https://github.com/atiroop/jocky-image-optimizer/actions/runs/42956164775) passed static/unit, both WordPress integration versions, and real encoder integration, but its browser job failed when Elementor 4.4.0 returned cached document output and skipped `elementor/widget/render_content` during an OFF-to-ON transition. The artifact job was skipped as a dependent job.
+The final focused browser run [42977047573](https://github.com/atiroop/jocky-image-optimizer/actions/runs/42977047573) on `feature/milestone-6-frontend-delivery` at `1e789b40ab9f9a0d53c93b6d13cc9f30a1c40fc8` passed all six jobs: static/unit, WordPress 6.6.11, WordPress 7.1.4, encoder integration, frontend browser integration, and beta package artifact.
 
-The implementation now treats Elementor Element Caching as unsupported for Elementor widget delivery. With the setting enabled, new Image and Image Box renders return unchanged markup, and an administrator notice directs the operator to disable Element Cache and clear Elementor Files & Data. There is no targeted invalidation call: Elementor's public full Files & Data clear is broad, so JIO does not invoke it automatically. An already-warm Elementor cache can bypass the adapter; previously cached markup from older JIO versions therefore requires the manual Elementor purge. Gutenberg delivery is unaffected. The browser harness explicitly configures Element Caching OFF for supported-mode acceptance, then separately enables it in disposable WordPress to assert cache state, hook execution/bypass, original fallback, and warning persistence.
+The `srcset` mismatch was a test baseline error. Stage A, `wp_get_attachment_image()`, emitted five JPEG responsive candidates. Elementor 4.4.0's Image Box stage B (its output before JIO's widget callback) omitted `srcset`; stage C after JIO also omitted it; stage D in Chromium's legacy fallback retained that Elementor behavior and loaded the original JPEG successfully. The test had selected the generic WordPress JPEG baseline for an Elementor assertion. It now compares Elementor's actual pre-hook attributes with the final image and uses the correct widget baseline. No synthetic `srcset` is inserted and no production transformation change was needed.
 
-Locally available checks on this Windows workspace: `composer lint` passed (0 errors/warnings); `composer test` passed 47/47; `composer validate --no-check-publish`, `composer audit --locked`, `actionlint .github/workflows/ci.yml`, PHP syntax checks, `node --check tests/browser/run-browser-tests.js`, and `git diff --check` passed. Local disposable WordPress/MySQL/Elementor/Chromium and encoder runtimes are unavailable, so these acceptance checks require GitHub Actions. CI outcomes, artifact ZIP contents, and SHA-256 remain pending.
+The supported Elementor mode is Element Caching OFF. With it OFF, Chromium verified Image and Image Box WebP/AVIF selection, original fallbacks, attributes, and responsive behavior. With Element Caching ON, the run observed warm cached Elementor output with zero widget-hook calls and original images; cold renders fail closed. This does not invalidate previously cached document HTML and is not full cache compatibility. Administrators must disable Element Cache and may need to clear Elementor Files & Data before relying on delivery changes. Gutenberg delivery remains independent of Elementor's cache.
 
-## Milestone 6 final acceptance — browser and Elementor validation pending
+The browser suite also passed legacy, missing, and stale derivative fallback, reoptimization, OFF/ON rollback, unsupported CSS background preservation, resource MIME/currentSrc/natural dimensions, no broken image requests, and no frontend encoder execution.
 
-The prior five-job run below verified the core implementation, but it did not install Elementor or run a browser. A dedicated disposable WordPress/Elementor/Chromium job is now configured; its results remain unverified until GitHub Actions completes for the current feature commit. Local WPCS, standalone, Composer, PHP syntax, npm audit, JavaScript syntax, actionlint, and Bash syntax checks passed on this Windows workspace. The actual WordPress/MySQL/encoder/Chromium suite cannot run locally.
+| Final check | Result | Evidence |
+|---|---|---|
+| WPCS and standalone | Passed locally | `composer lint`: 0 errors/warnings; `composer test`: 47/47. The final CI `static-and-unit` job also passed. |
+| Composer/workflow/PHP/JS validation | Passed locally | `composer validate --no-check-publish`, `composer audit --locked`, `actionlint .github/workflows/ci.yml`, PHP syntax, Node syntax, and `git diff --check` passed. |
+| WordPress integration | Passed in CI | PHP 8.3 disposable packaged-plugin jobs passed on WordPress 6.6.11 and 7.1.4. Not runnable locally because the workspace lacks disposable WordPress/MySQL runtime. |
+| Real encoders | Passed in CI | Isolated real-encoder integration job passed. Encoder binaries are not installed in this Windows workspace. |
+| Browser / Elementor | Passed in CI | Run 42977047573 used disposable WordPress 7.1.4, Elementor 4.4.0, and Chromium. Local browser integration is unavailable. |
+| Production ZIP artifact | Passed and validated | Artifact `jocky-image-optimizer-0.6.0-beta.1`, ID `13836221448`, downloaded from [run 42977047573](https://github.com/atiroop/jocky-image-optimizer/actions/runs/42977047573/artifacts/13836221448). The installable ZIP is 112,785 bytes; SHA-256 `A4C964AF35DE9D1A1A81A5CA117AD5A6B51E7D6C6FBBEF6F311038E9FD6F6897`. `php scripts/validate-package.php` passed on the downloaded ZIP and confirmed its production dependencies and one-directory structure. |
+
+No production site, VPS, database, media, Elementor, WP Rocket, or Cloudflare configuration was accessed or modified.
+
+## Milestone 6 initial browser acceptance (historical failure)
+
+The initial browser run [42956164775](https://github.com/atiroop/jocky-image-optimizer/actions/runs/42956164775) failed because Elementor's warm document cache skipped `elementor/widget/render_content`. The focused cache policy and supported-mode browser acceptance above supersede that pending result; the limitation remains documented and tested.
 
 ## Milestone 6 implementation baseline (before browser acceptance)
 
