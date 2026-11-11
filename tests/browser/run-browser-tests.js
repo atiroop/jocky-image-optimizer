@@ -36,13 +36,15 @@ async function withPage(viewport, callback) {
 
 function controlUrl(parameters) {
   const url = new URL('/?jio_browser=control', baseUrl);
-  url.searchParams.set('token', fixture.elementor_token);
   for (const [key, value] of Object.entries(parameters)) url.searchParams.set(key, String(value));
   return url.toString();
 }
 
 async function control(parameters) {
-  const response = await fetch(controlUrl(parameters), { cache: 'no-store' });
+  const response = await fetch(controlUrl(parameters), {
+    cache: 'no-store',
+    headers: { 'X-JIO-Browser-Token': fixture.elementor_token },
+  });
   assert.equal(response.status, 200, `Fixture control failed: ${parameters.operation}`);
   return response.json();
 }
@@ -117,7 +119,7 @@ async function openGutenberg(page) {
 
 async function openElementor(page, responses) {
   const url = new URL('/?jio_browser=elementor', baseUrl);
-  url.searchParams.set('token', fixture.elementor_token);
+  await page.setExtraHTTPHeaders({ 'X-JIO-Browser-Token': fixture.elementor_token });
   const response = await page.goto(url.toString(), { waitUntil: 'networkidle' });
   assert.equal(response.status(), 200, 'The actual Elementor frontend rendering API must return successfully.');
   assert.equal(response.headers()['x-jio-elementor-version'], fixture.elementor);

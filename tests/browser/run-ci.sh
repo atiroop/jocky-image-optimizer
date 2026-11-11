@@ -71,6 +71,25 @@ php "$WP_CLI_PHAR" --allow-root --path="$WP_CORE_DIR" core install \
 	--url="$SITE_URL" --title='JIO Disposable Browser Acceptance' \
 	--admin_user=jio_browser_admin --admin_password='disposable-browser-password' \
 	--admin_email=jio-browser@example.invalid --skip-email
+# WP-CLI can derive a subdirectory URL from the temporary --path. Pin and verify
+# both persisted WordPress URLs so the filesystem directory never becomes public.
+readonly DETECTED_HOME="$(php "$WP_CLI_PHAR" --allow-root --path="$WP_CORE_DIR" option get home)"
+readonly DETECTED_SITEURL="$(php "$WP_CLI_PHAR" --allow-root --path="$WP_CORE_DIR" option get siteurl)"
+printf 'WP-CLI initially persisted home=%s siteurl=%s\n' "$DETECTED_HOME" "$DETECTED_SITEURL"
+php "$WP_CLI_PHAR" --allow-root --path="$WP_CORE_DIR" option update home "$SITE_URL"
+php "$WP_CLI_PHAR" --allow-root --path="$WP_CORE_DIR" option update siteurl "$SITE_URL"
+readonly ACTUAL_HOME="$(php "$WP_CLI_PHAR" --allow-root --path="$WP_CORE_DIR" option get home)"
+readonly ACTUAL_SITEURL="$(php "$WP_CLI_PHAR" --allow-root --path="$WP_CORE_DIR" option get siteurl)"
+if [[ "$ACTUAL_HOME" != "$SITE_URL" || "$ACTUAL_SITEURL" != "$SITE_URL" ]]; then
+	echo "WordPress origin mismatch: expected home/siteurl $SITE_URL; got home=$ACTUAL_HOME siteurl=$ACTUAL_SITEURL" >&2
+	exit 1
+fi
+printf 'Verified persisted WordPress home and siteurl: %s\n' "$SITE_URL"
+readonly RUNTIME_ORIGINS="$(php "$WP_CLI_PHAR" --allow-root --path="$WP_CORE_DIR" eval 'echo home_url() . "\n" . site_url();')"
+if [[ "$RUNTIME_ORIGINS" != "$SITE_URL"$'\n'"$SITE_URL" ]]; then
+	echo "WordPress runtime URL helpers disagree with the persisted options: $RUNTIME_ORIGINS" >&2
+	exit 1
+fi
 php "$WP_CLI_PHAR" --allow-root --path="$WP_CORE_DIR" option update permalink_structure ''
 php "$WP_CLI_PHAR" --allow-root --path="$WP_CORE_DIR" option update thumbnail_size_w 150
 php "$WP_CLI_PHAR" --allow-root --path="$WP_CORE_DIR" option update thumbnail_size_h 100
@@ -105,6 +124,7 @@ readonly FIXTURE_JSON="$(php "$WP_CLI_PHAR" --allow-root --path="$WP_CORE_DIR" o
 readonly ENCODER_COUNT_BEFORE="$(wc -l < "$ENCODER_MARKER" | tr -d '[:space:]')"
 
 # This is a disposable local HTTP origin, with no page cache or external services.
+export JIO_EXPECTED_DOCUMENT_ROOT="$WP_CORE_DIR"
 php -S 127.0.0.1:8080 -t "$WP_CORE_DIR" "$GITHUB_WORKSPACE/tests/browser/php-router.php" > "$RUNNER_TEMP/jio-browser-php-server.log" 2>&1 &
 readonly PHP_SERVER_PID=$!
 cleanup() {
@@ -117,7 +137,65 @@ for attempt in $(seq 1 30); do
 	fi
 	sleep 1
 done
-curl --fail --silent "$SITE_URL/" >/dev/null
+readonly HOME_STATUS="$(curl --silent --dump-header "$RUNNER_TEMP/jio-home-preflight.headers" \
+	--output "$RUNNER_TEMP/jio-home-preflight.html" --write-out '%{http_code}' "$SITE_URL/" 2>/dev/null || true)"
+if [[ "$HOME_STATUS" != '200' ]] || ! grep -qi '^X-JIO-Test-Document-Root: match' "$RUNNER_TEMP/jio-home-preflight.headers"; then
+	echo "Disposable HTTP origin preflight failed at $SITE_URL or its document root did not match the WordPress installation." >&2
+	tail -n 30 "$RUNNER_TEMP/jio-browser-php-server.log" >&2
+	exit 1
+fi
+
+readonly GUTENBERG_PAGE_ID="$(php "$WP_CLI_PHAR" --allow-root --path="$WP_CORE_DIR" option get jio_browser_gutenberg_page)"
+readonly GUTENBERG_URL="$(php "$WP_CLI_PHAR" --allow-root --path="$WP_CORE_DIR" eval "echo get_permalink(${GUTENBERG_PAGE_ID});")"
+readonly GUTENBERG_FIXTURE_URL="$(php -r '$f=json_decode(stream_get_contents(STDIN), true); echo $f["gutenberg_url"] ?? "";' <<< "$FIXTURE_JSON")"
+readonly ELEMENTOR_URL="$(php -r '$f=json_decode(stream_get_contents(STDIN), true); echo $f["elementor_url"] ?? "";' <<< "$FIXTURE_JSON")"
+readonly ELEMENTOR_TOKEN="$(php -r '$f=json_decode(stream_get_contents(STDIN), true); echo $f["elementor_token"] ?? "";' <<< "$FIXTURE_JSON")"
+readonly CLI_ELEMENTOR_ACTIVE="$(php "$WP_CLI_PHAR" --allow-root --path="$WP_CORE_DIR" eval 'echo class_exists("\\Elementor\\Plugin") ? "yes" : "no";')"
+
+for url in "$GUTENBERG_URL" "$GUTENBERG_FIXTURE_URL" "$ELEMENTOR_URL"; do
+	if [[ "$url" != "$SITE_URL/"* ]]; then
+		echo "Fixture URL is outside the intended origin $SITE_URL: $url" >&2
+		exit 1
+	fi
+done
+[[ "$GUTENBERG_URL" == "$GUTENBERG_FIXTURE_URL" ]] || { echo 'get_permalink() and fixture Gutenberg URL disagree.' >&2; exit 1; }
+[[ "$CLI_ELEMENTOR_ACTIVE" == 'yes' ]] || { echo 'Elementor plugin is not active in the disposable WordPress runtime.' >&2; exit 1; }
+
+check_http_200() {
+	local description="$1"
+	local url="$2"
+	local output_file="$3"
+	shift 3
+	local status
+	status="$(curl --silent --output "$output_file" --write-out '%{http_code}' "$@" "$url" 2>/dev/null || true)"
+	if [[ "$status" != '200' ]]; then
+		echo "$description preflight failed: HTTP ${status:-no response} at the expected local origin." >&2
+		tail -n 30 "$RUNNER_TEMP/jio-browser-php-server.log" >&2
+		return 1
+	fi
+}
+
+check_http_200 'Gutenberg fixture' "$GUTENBERG_URL" "$RUNNER_TEMP/jio-gutenberg-preflight.html"
+readonly ELEMENTOR_STATUS="$(curl --silent --dump-header "$RUNNER_TEMP/jio-elementor-preflight.headers" \
+	--output "$RUNNER_TEMP/jio-elementor-preflight.html" --write-out '%{http_code}' \
+	-H "X-JIO-Browser-Token: $ELEMENTOR_TOKEN" "$ELEMENTOR_URL" 2>/dev/null || true)"
+if [[ "$ELEMENTOR_STATUS" != '200' ]] || ! grep -qi "^X-JIO-Elementor-Version: ${ELEMENTOR_VERSION}" "$RUNNER_TEMP/jio-elementor-preflight.headers"; then
+	echo "Elementor fixture preflight failed: expected HTTP 200 and runtime version ${ELEMENTOR_VERSION}." >&2
+	tail -n 30 "$RUNNER_TEMP/jio-browser-php-server.log" >&2
+	exit 1
+fi
+
+for asset in png jpeg; do
+	image_url="$(php -r '$f=json_decode(stream_get_contents(STDIN), true); echo $f["attachments"][$argv[1]]["url"] ?? "";' "$asset" <<< "$FIXTURE_JSON")"
+	image_type='image/png'
+	[[ "$asset" == 'jpeg' ]] && image_type='image/jpeg'
+	image_result="$(curl --silent --output /dev/null --write-out '%{http_code} %{content_type}' "$image_url" 2>/dev/null || true)"
+	if [[ "$image_result" != "200 $image_type" ]]; then
+		echo "Synthetic $asset image preflight failed: expected HTTP 200 $image_type; got ${image_result:-no response}." >&2
+		exit 1
+	fi
+done
+printf 'Preflight passed: Gutenberg, Elementor %s, and both synthetic originals are HTTP-accessible from %s.\n' "$ELEMENTOR_VERSION" "$SITE_URL"
 
 cd "$GITHUB_WORKSPACE/tests/browser"
 npm ci --no-audit --no-fund

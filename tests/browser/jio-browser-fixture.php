@@ -37,6 +37,9 @@ add_filter(
 
 register_shutdown_function(
 	static function () {
+		if ( defined( 'WP_CLI' ) && WP_CLI ) {
+			return;
+		}
 		if ( isset( $GLOBALS['jio_browser_registry_queries'] ) ) {
 			header( 'X-JIO-Registry-Lookups: ' . (int) $GLOBALS['jio_browser_registry_queries'] );
 		}
@@ -50,7 +53,7 @@ add_action(
 		if ( '' === $action ) {
 			return;
 		}
-		$provided = isset( $_GET['token'] ) ? (string) wp_unslash( $_GET['token'] ) : '';
+		$provided = isset( $_SERVER['HTTP_X_JIO_BROWSER_TOKEN'] ) ? (string) wp_unslash( $_SERVER['HTTP_X_JIO_BROWSER_TOKEN'] ) : '';
 		$expected = (string) get_option( 'jio_browser_secret', '' );
 		if ( '' === $expected || ! hash_equals( $expected, $provided ) ) {
 			status_header( 403 );

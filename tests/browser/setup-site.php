@@ -200,6 +200,7 @@ update_post_meta( $elementor_id, '_elementor_template_type', 'wp-page' );
 update_post_meta( $elementor_id, '_elementor_version', ELEMENTOR_VERSION );
 update_post_meta( $elementor_id, '_elementor_data', wp_slash( wp_json_encode( $elementor_data ) ) );
 update_option( 'jio_browser_elementor_page', (int) $elementor_id, false );
+update_option( 'jio_browser_gutenberg_page', (int) $gutenberg_id, false );
 update_option( 'jio_browser_secret', bin2hex( random_bytes( 32 ) ), false );
 update_option(
 	'jio_browser_fixture_data',
@@ -207,7 +208,7 @@ update_option(
 		'wordpress'          => get_bloginfo( 'version' ),
 		'elementor'          => ELEMENTOR_VERSION,
 		'gutenberg_url'      => get_permalink( $gutenberg_id ),
-		'elementor_url'      => home_url( '/' ),
+		'elementor_url'      => home_url( '/?jio_browser=elementor' ),
 		'elementor_page_id'  => (int) $elementor_id,
 		'elementor_token'    => get_option( 'jio_browser_secret' ),
 		'original_hashes'    => array( 'png' => $png['sha256'], 'jpeg' => $jpeg['sha256'] ),
@@ -220,21 +221,4 @@ update_option(
 	false
 );
 
-WP_CLI::success(
-	wp_json_encode(
-		array(
-			'wordpress'         => get_bloginfo( 'version' ),
-			'elementor'         => ELEMENTOR_VERSION,
-			'gutenberg_url'     => get_permalink( $gutenberg_id ),
-			'elementor_url'     => home_url( '/?jio_browser=elementor&token=' . rawurlencode( get_option( 'jio_browser_secret' ) ) ),
-			'elementor_page_id' => (int) $elementor_id,
-			'elementor_token'   => get_option( 'jio_browser_secret' ),
-			'original_hashes'   => array( 'png' => $png['sha256'], 'jpeg' => $jpeg['sha256'] ),
-			'original_metadata' => array( 'png' => $png['metadata'], 'jpeg' => $jpeg['metadata'] ),
-			'attachments'       => array(
-				'png'  => array_merge( $png, array( 'alt' => 'JIO accessible image ' . $png['id'] ) ),
-				'jpeg' => array_merge( $jpeg, array( 'alt' => 'JIO accessible image ' . $jpeg['id'] ) ),
-			),
-		)
-	)
-);
+WP_CLI::success( 'Created synthetic Gutenberg and Elementor image fixtures; private fixture token is not printed.' );
