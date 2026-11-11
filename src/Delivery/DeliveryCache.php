@@ -26,7 +26,9 @@ final class DeliveryCache {
 	public function register(): void {
 		add_action( 'update_option_' . Plugin::OPTION_NAME, array( $this, 'settings_updated' ), 10, 2 );
 		add_action( 'jio_derivative_updated', array( $this, 'derivative_updated' ) );
+		add_action( 'update_option_elementor_element_cache_ttl', array( $this, 'elementor_cache_setting_updated' ), 10, 2 );
 		add_action( 'admin_notices', array( $this, 'notice' ) );
+		add_action( 'admin_notices', array( $this, 'elementor_element_cache_notice' ) );
 	}
 
 	/** Purges page cache when either frontend setting changes.
@@ -39,6 +41,12 @@ final class DeliveryCache {
 		$new = is_array( $new_value ) ? $new_value : array();
 		if ( ( $old['frontend_delivery'] ?? false ) === ( $new['frontend_delivery'] ?? false ) && ( $old['delivery_preference'] ?? 'auto' ) === ( $new['delivery_preference'] ?? 'auto' ) ) {
 			return;
+		}
+		if ( ( $new['frontend_delivery'] ?? false ) && FrontendDelivery::elementor_element_cache_enabled() ) {
+			update_option( 'jio_elementor_cache_notice', true, false );
+		}
+		if ( ( $old['frontend_delivery'] ?? false ) && ! ( $new['frontend_delivery'] ?? false ) && FrontendDelivery::elementor_element_cache_enabled() ) {
+			update_option( 'jio_elementor_cache_notice', true, false );
 		}
 		$this->purge_cache();
 	}
@@ -56,6 +64,22 @@ final class DeliveryCache {
 		$this->purge_cache();
 	}
 
+	/** Retains the compatibility warning until Elementor disables and clears its cache.
+	 *
+	 * @param mixed $old_value Previous cache setting.
+	 * @param mixed $new_value Updated cache setting.
+	 */
+	public function elementor_cache_setting_updated( $old_value, $new_value ): void {
+		if ( 'disable' === $new_value ) {
+			delete_option( 'jio_elementor_cache_notice' );
+			return;
+		}
+		$settings = Settings::sanitize( get_option( Plugin::OPTION_NAME, array() ) );
+		if ( $settings['frontend_delivery'] ) {
+			update_option( 'jio_elementor_cache_notice', true, false );
+		}
+	}
+
 	/** Calls the optional cache purge API and records external cache guidance.
 	 */
 	private function purge_cache(): void {
@@ -68,6 +92,22 @@ final class DeliveryCache {
 			}
 		}
 		update_option( 'jio_delivery_cache_notice', 'manual', false );
+	}
+
+	/** Warns that Elementor Element Caching is outside the supported delivery mode.
+	 */
+	public function elementor_element_cache_notice(): void {
+		$settings                   = Settings::sanitize( get_option( Plugin::OPTION_NAME, array() ) );
+		$cache_is_active            = FrontendDelivery::elementor_element_cache_enabled();
+		$warning_pending            = (bool) get_option( 'jio_elementor_cache_notice', false );
+		$delivery_cache_unavailable = ! $settings['frontend_delivery'] || ! $cache_is_active;
+		if ( ! current_user_can( 'manage_options' ) || ( ! $warning_pending && $delivery_cache_unavailable ) ) {
+			return;
+		}
+		printf(
+			'<div class="notice notice-warning"><p>%s</p></div>',
+			esc_html__( 'Elementor Element Caching is active. Jocky Image Optimizer will leave Elementor Image and Image Box output unchanged while this cache is enabled. For Elementor delivery, disable Element Cache in Elementor > Editor > Settings > Performance, then use Elementor > Editor > Home > Tools > Clear Files & Data to remove previously cached widget markup.', 'jocky-image-optimizer' )
+		);
 	}
 
 	/** Displays manual external-cache purge guidance to administrators.

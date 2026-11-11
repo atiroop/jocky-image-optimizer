@@ -100,6 +100,13 @@ php "$WP_CLI_PHAR" --allow-root --path="$WP_CORE_DIR" option update large_size_w
 php "$WP_CLI_PHAR" --allow-root --path="$WP_CORE_DIR" option update large_size_h 0
 php "$WP_CLI_PHAR" --allow-root --path="$WP_CORE_DIR" plugin activate elementor jocky-image-optimizer
 
+# The fully supported Elementor mode for JIO delivery is Element Caching OFF.
+# Configure it through Elementor's persisted setting before building the fixture.
+readonly ELEMENTOR_CACHE_INITIAL="$(php "$WP_CLI_PHAR" --allow-root --path="$WP_CORE_DIR" option get elementor_element_cache_ttl 2>/dev/null || true)"
+php "$WP_CLI_PHAR" --allow-root --path="$WP_CORE_DIR" option update elementor_element_cache_ttl disable
+[[ "$(php "$WP_CLI_PHAR" --allow-root --path="$WP_CORE_DIR" option get elementor_element_cache_ttl)" == 'disable' ]]
+printf 'Elementor 4.4.0 Element Caching explicitly disabled for the supported-mode browser scenario (initial setting: %s).\n' "${ELEMENTOR_CACHE_INITIAL:-unset}"
+
 [[ "$(php "$WP_CLI_PHAR" --allow-root --path="$WP_CORE_DIR" core version)" == "$WP_VERSION" ]]
 [[ "$(php "$WP_CLI_PHAR" --allow-root --path="$WP_CORE_DIR" plugin get elementor --field=version)" == "$ELEMENTOR_VERSION" ]]
 [[ "$(php "$WP_CLI_PHAR" --allow-root --path="$WP_CORE_DIR" plugin get jocky-image-optimizer --field=version)" == "$JIO_VERSION" ]]

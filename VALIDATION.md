@@ -1,5 +1,13 @@
 # Validation
 
+## Milestone 6 Elementor Element Cache closure (current changes)
+
+Validation is pending for the focused cache-compatibility changes; no result is claimed until the feature-branch workflow completes. The prior browser run [42956164775](https://github.com/atiroop/jocky-image-optimizer/actions/runs/42956164775) passed static/unit, both WordPress integration versions, and real encoder integration, but its browser job failed when Elementor 4.4.0 returned cached document output and skipped `elementor/widget/render_content` during an OFF-to-ON transition. The artifact job was skipped as a dependent job.
+
+The implementation now treats Elementor Element Caching as unsupported for Elementor widget delivery. With the setting enabled, new Image and Image Box renders return unchanged markup, and an administrator notice directs the operator to disable Element Cache and clear Elementor Files & Data. There is no targeted invalidation call: Elementor's public full Files & Data clear is broad, so JIO does not invoke it automatically. An already-warm Elementor cache can bypass the adapter; previously cached markup from older JIO versions therefore requires the manual Elementor purge. Gutenberg delivery is unaffected. The browser harness explicitly configures Element Caching OFF for supported-mode acceptance, then separately enables it in disposable WordPress to assert cache state, hook execution/bypass, original fallback, and warning persistence.
+
+Locally available checks on this Windows workspace: `composer lint` passed (0 errors/warnings); `composer test` passed 47/47; `composer validate --no-check-publish`, `composer audit --locked`, `actionlint .github/workflows/ci.yml`, PHP syntax checks, `node --check tests/browser/run-browser-tests.js`, and `git diff --check` passed. Local disposable WordPress/MySQL/Elementor/Chromium and encoder runtimes are unavailable, so these acceptance checks require GitHub Actions. CI outcomes, artifact ZIP contents, and SHA-256 remain pending.
+
 ## Milestone 6 final acceptance — browser and Elementor validation pending
 
 The prior five-job run below verified the core implementation, but it did not install Elementor or run a browser. A dedicated disposable WordPress/Elementor/Chromium job is now configured; its results remain unverified until GitHub Actions completes for the current feature commit. Local WPCS, standalone, Composer, PHP syntax, npm audit, JavaScript syntax, actionlint, and Bash syntax checks passed on this Windows workspace. The actual WordPress/MySQL/encoder/Chromium suite cannot run locally.

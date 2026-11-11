@@ -175,7 +175,12 @@ async function openElementor(page, responses) {
   const traceHeader = response.headers()['x-jio-elementor-trace'] || '';
   assert.ok(traceHeader, 'Elementor runtime instrumentation returned its widget path trace.');
   const trace = JSON.parse(Buffer.from(traceHeader, 'base64').toString('utf8'));
-  return { responses, trace };
+  const elementCache = response.headers()['x-jio-elementor-element-cache'];
+  const documentCache = response.headers()['x-jio-elementor-document-cache'];
+  assert.ok(['enabled', 'disabled'].includes(elementCache), 'Elementor Element Cache state is reported.');
+  assert.ok(['warm', 'cold'].includes(documentCache), 'Elementor document cache state is reported.');
+  console.log(`Elementor cache state: element=${elementCache}, document=${documentCache}, hook calls=${trace.length}`);
+  return { responses, trace, elementCache, documentCache };
 }
 
 try {
@@ -206,7 +211,11 @@ try {
   });
   await control({ operation: 'settings', enabled: 0, preference: 'auto' });
   await withPage({ width: 1280, height: 900 }, async (page, responses) => {
-    await openElementor(page, responses);
+    const elementor = await openElementor(page, responses);
+    assert.equal(elementor.elementCache, 'disabled');
+    assert.equal(elementor.documentCache, 'cold');
+    assert.ok(elementor.trace.some((entry) => entry.name === 'image'));
+    assert.ok(elementor.trace.some((entry) => entry.name === 'image-box'));
     const png = await inspectLoadedImage(page, '[data-id="jioimg1"] img', 'image/png', responses, true, 'png', 'elementor-png');
     const jpeg = await inspectLoadedImage(page, '[data-id="jioibox1"] img', 'image/jpeg', responses, true, 'jpeg', 'elementor-jpeg');
     attributeBaselines.set('elementor-png', png.attributes);
@@ -250,6 +259,17 @@ try {
     assert.equal(background.img, 0, 'Unsupported background images remain CSS backgrounds.');
     console.log('Elementor Image and Image Box rendered through Elementor 4.4.0; CSS background retained its original source.');
   });
+  state = await control({ operation: 'settings', enabled: 0, preference: 'auto' });
+  await withPage({ width: 1280, height: 900 }, async (page, responses) => {
+    const elementor = await openElementor(page, responses);
+    assert.equal(elementor.elementCache, 'disabled');
+    assert.ok(elementor.trace.some((entry) => entry.name === 'image'));
+    assert.ok(elementor.trace.some((entry) => entry.name === 'image-box'));
+    await inspectLoadedImage(page, '[data-id="jioimg1"] img', 'image/png', responses, true, 'png', 'elementor-png');
+    await inspectLoadedImage(page, '[data-id="jioibox1"] img', 'image/jpeg', responses, true, 'jpeg', 'elementor-jpeg');
+    assert.equal(await page.locator('picture').count(), 0, 'Delivery OFF removes Elementor picture wrappers when Element Caching is disabled.');
+  });
+  await control({ operation: 'settings', enabled: 1, preference: 'auto' });
 
   // Prefer-WebP and WebP-only source sets must result in actual WebP transfers.
   await control({ operation: 'settings', enabled: 1, preference: 'webp_only' });
@@ -334,7 +354,61 @@ try {
     assert.equal(state.original_sha256, fixture.original_hashes[asset], `Original ${asset} bytes remained unchanged.`);
     assert.deepEqual(state.attachment_metadata, fixture.original_metadata[asset], `WordPress ${asset} attachment metadata remained unchanged.`);
   }
-  console.log('PASS: OFF, WebP, Auto AVIF, responsive selection, Gutenberg, Elementor, legacy rejection, reoptimization, missing derivatives, rollback, metadata, and network integrity.');
+
+  // Elementor Element Caching is an explicitly unsupported operating mode for
+  // JIO widget delivery. Verify cold rendering fails closed and the warmed OFF
+  // document cache stays original across OFF->ON->OFF without pretending the hook ran.
+  state = await control({ operation: 'elementor_cache', enabled: 1 });
+  assert.equal(state.elementor_cache_enabled, true);
+  await withPage({ width: 1280, height: 900 }, async (page, responses) => {
+    const elementor = await openElementor(page, responses);
+    assert.equal(elementor.elementCache, 'enabled');
+    assert.equal(elementor.documentCache, 'warm');
+    assert.ok(elementor.trace.some((entry) => entry.name === 'image'));
+    assert.ok(elementor.trace.every((entry) => !entry.picture_after_adapter), 'With Element Caching active, fresh Elementor widgets fail closed to the original markup.');
+    await inspectLoadedImage(page, '[data-id="jioimg1"] img', 'image/png', responses, true, 'png', 'elementor-png');
+  });
+  state = await control({ operation: 'settings', enabled: 1, preference: 'auto' });
+  assert.equal(state.elementor_cache_warning, true, 'The administrator compatibility warning is retained while cached Elementor delivery is enabled.');
+  await withPage({ width: 1280, height: 900 }, async (page, responses) => {
+    const elementor = await openElementor(page, responses);
+    assert.equal(elementor.elementCache, 'enabled');
+    assert.equal(elementor.documentCache, 'warm');
+    assert.deepEqual(elementor.trace, [], 'Warm Elementor output bypasses widget rendering; the original OFF cache remains safe.');
+    await inspectLoadedImage(page, '[data-id="jioimg1"] img', 'image/png', responses, true, 'png', 'elementor-png');
+  });
+  state = await control({ operation: 'settings', enabled: 0, preference: 'auto' });
+  assert.equal(state.elementor_cache_warning, true, 'The cache warning persists after Delivery is turned OFF until Elementor cache is disabled.');
+  await withPage({ width: 1280, height: 900 }, async (page, responses) => {
+    const elementor = await openElementor(page, responses);
+    assert.equal(elementor.elementCache, 'enabled');
+    assert.equal(elementor.documentCache, 'warm');
+    assert.deepEqual(elementor.trace, [], 'Warm OFF cache remains original and does not claim delivery-hook execution.');
+    await inspectLoadedImage(page, '[data-id="jioimg1"] img', 'image/png', responses, true, 'png', 'elementor-png');
+  });
+
+  // Elementor's supported Element Cache setting change clears its own document
+  // cache. With JIO ON and a cold cache, the adapter must still fail closed.
+  await control({ operation: 'elementor_cache', enabled: 0 });
+  await control({ operation: 'elementor_cache', enabled: 1 });
+  await control({ operation: 'settings', enabled: 1, preference: 'auto' });
+  await withPage({ width: 1280, height: 900 }, async (page, responses) => {
+    const elementor = await openElementor(page, responses);
+    assert.equal(elementor.elementCache, 'enabled');
+    assert.equal(elementor.documentCache, 'warm');
+    assert.ok(elementor.trace.some((entry) => entry.name === 'image'));
+    assert.ok(elementor.trace.every((entry) => !entry.picture_after_adapter), 'A cold render with Element Caching ON fails closed despite Delivery ON.');
+    await inspectLoadedImage(page, '[data-id="jioimg1"] img', 'image/png', responses, true, 'png', 'elementor-png');
+  });
+  await control({ operation: 'settings', enabled: 0, preference: 'auto' });
+  await withPage({ width: 1280, height: 900 }, async (page, responses) => {
+    const elementor = await openElementor(page, responses);
+    assert.equal(elementor.elementCache, 'enabled');
+    assert.deepEqual(elementor.trace, [], 'The cold fail-closed original is reused from Elementor cache.');
+    await inspectLoadedImage(page, '[data-id="jioimg1"] img', 'image/png', responses, true, 'png', 'elementor-png');
+  });
+  await control({ operation: 'elementor_cache', enabled: 0 });
+  console.log('PASS: Gutenberg and Elementor AVIF/WebP delivery with Element Caching OFF; Element Caching ON was verified to fail closed to original images.');
 } finally {
   await browser.close();
 }

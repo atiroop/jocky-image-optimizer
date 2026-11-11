@@ -145,6 +145,7 @@ add_action(
 			header( 'Content-Type: text/plain; charset=UTF-8' );
 			header( 'Cache-Control: no-store, no-cache, must-revalidate, max-age=0' );
 			header( 'X-JIO-Elementor-Version: ' . rawurlencode( (string) ELEMENTOR_VERSION ) );
+			header( 'X-JIO-Elementor-Element-Cache: ' . ( 'disable' === get_option( 'elementor_element_cache_ttl', '' ) ? 'disabled' : 'enabled' ) );
 			echo 'Elementor is active.';
 			exit;
 		}
@@ -156,9 +157,12 @@ add_action(
 				exit;
 			}
 			$markup = $elementor->frontend->get_builder_content_for_display( (int) get_option( 'jio_browser_elementor_page', 0 ), true );
+			$page_id = (int) get_option( 'jio_browser_elementor_page', 0 );
 			header( 'Content-Type: text/html; charset=UTF-8' );
 			header( 'Cache-Control: no-store, no-cache, must-revalidate, max-age=0' );
 			header( 'X-JIO-Elementor-Version: ' . rawurlencode( (string) ELEMENTOR_VERSION ) );
+			header( 'X-JIO-Elementor-Element-Cache: ' . ( 'disable' === get_option( 'elementor_element_cache_ttl', '' ) ? 'disabled' : 'enabled' ) );
+			header( 'X-JIO-Elementor-Document-Cache: ' . ( metadata_exists( 'post', $page_id, '_elementor_element_cache' ) ? 'warm' : 'cold' ) );
 			header( 'X-JIO-Elementor-Trace: ' . base64_encode( (string) wp_json_encode( $GLOBALS['jio_browser_elementor_trace'] ) ) );
 			header( 'X-JIO-Registry-Lookups: ' . (int) $GLOBALS['jio_browser_registry_queries'] );
 			echo '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>JIO Elementor fixture</title></head><body>' . $markup . '</body></html>';
@@ -175,7 +179,10 @@ add_action(
 		$wpdb      = $GLOBALS['wpdb'];
 		$settings  = \Jocky\ImageOptimizer\Settings::sanitize( get_option( \Jocky\ImageOptimizer\Plugin::OPTION_NAME, array() ) );
 
-		if ( 'settings' === $operation ) {
+		if ( 'elementor_cache' === $operation ) {
+			$enabled = isset( $_GET['enabled'] ) && '1' === (string) wp_unslash( $_GET['enabled'] );
+			update_option( 'elementor_element_cache_ttl', $enabled ? '24' : 'disable' );
+		} elseif ( 'settings' === $operation ) {
 			$enabled = isset( $_GET['enabled'] ) && '1' === (string) wp_unslash( $_GET['enabled'] );
 			$preference = isset( $_GET['preference'] ) ? sanitize_key( wp_unslash( $_GET['preference'] ) ) : 'auto';
 			$settings['frontend_delivery']   = $enabled;
@@ -266,6 +273,8 @@ add_action(
 				'frontend_delivery'      => $settings['frontend_delivery'],
 				'delivery_preference'    => $settings['delivery_preference'],
 				'wp_rocket_available'    => function_exists( 'rocket_clean_domain' ),
+				'elementor_cache_enabled' => class_exists( '\\Elementor\\Plugin' ) && 'disable' !== get_option( 'elementor_element_cache_ttl', '' ),
+				'elementor_cache_warning' => (bool) get_option( 'jio_elementor_cache_notice', false ),
 				'cache_notice'           => get_option( 'jio_delivery_cache_notice', '' ),
 				'attachment_id'          => $attachment_id,
 				'record_ids'             => $record_ids,

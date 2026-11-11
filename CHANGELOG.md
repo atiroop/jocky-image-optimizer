@@ -6,6 +6,7 @@
 - Add an additive schema migration for derivative file identity; pre-existing records without identity fail back to original markup until recreated by the current optimizer.
 - Add responsive same-aspect candidate sets, administrator format preferences, a read-only registry summary, WP Rocket domain purge when its documented function exists, and manual Cloudflare purge guidance.
 - Add an optional Elementor Image and Image Box adapter on Elementor's public final widget-content filter so picture sources are added after widget sanitization; it reuses the existing identity-checked resolver and leaves non-attachment content and backgrounds unchanged.
+- Guard Elementor Image and Image Box delivery when Elementor Element Caching is enabled. The adapter fails closed to original markup; administrators receive cache compatibility guidance. Elementor cache invalidation remains a manual site-level action because no documented targeted runtime API exists.
 - Add packaged WordPress integration coverage for off/on behavior, WebP, AVIF/WebP order, retained original attributes/srcset, and rollback. Background CSS, offloaded media, and unverified legacy derivatives remain unsupported.
 - Version target 0.6.0-beta.1; validation status is pending the Milestone 6 CI run.
 

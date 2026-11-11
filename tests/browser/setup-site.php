@@ -227,6 +227,7 @@ update_option(
 	array(
 		'wordpress'          => get_bloginfo( 'version' ),
 		'elementor'          => ELEMENTOR_VERSION,
+		'elementor_cache_enabled' => 'disable' !== get_option( 'elementor_element_cache_ttl', '' ),
 		'gutenberg_url'      => get_permalink( $gutenberg_id ),
 		'elementor_url'      => home_url( '/?jio_browser=elementor' ),
 		'elementor_preflight_url' => home_url( '/?jio_browser=elementor-preflight' ),

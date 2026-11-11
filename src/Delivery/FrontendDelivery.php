@@ -54,7 +54,7 @@ final class FrontendDelivery {
 	 * @return string Filtered widget HTML.
 	 */
 	public function elementor_widget_content( string $content, $widget ): string {
-		if ( is_admin() || ! is_object( $widget ) || ! method_exists( $widget, 'get_name' ) || ! method_exists( $widget, 'get_settings_for_display' ) ) {
+		if ( is_admin() || self::elementor_element_cache_enabled() || ! is_object( $widget ) || ! method_exists( $widget, 'get_name' ) || ! method_exists( $widget, 'get_settings_for_display' ) ) {
 			return $content;
 		}
 		$widget_name = $widget->get_name();
@@ -109,6 +109,17 @@ final class FrontendDelivery {
 			return $content;
 		}
 		return substr_replace( $content, $picture, $offset, strlen( $image_match[0][0] ) );
+	}
+
+	/** Reports Elementor Element Caching state without changing its site-wide setting.
+	 *
+	 * Elementor 4.4.0 treats every value except the literal 'disable' as active.
+	 * Its document cache can bypass elementor/widget/render_content.
+	 *
+	 * @return bool Whether Elementor Element Caching is active.
+	 */
+	public static function elementor_element_cache_enabled(): bool {
+		return class_exists( '\\Elementor\\Plugin' ) && 'disable' !== get_option( 'elementor_element_cache_ttl', '' );
 	}
 
 	/** Ensures Elementor's image source belongs to its claimed attachment.
