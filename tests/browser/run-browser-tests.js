@@ -55,6 +55,7 @@ function elementSelector(asset) {
 
 const preservedAttributes = ['src', 'srcset', 'sizes', 'width', 'height', 'alt', 'loading', 'decoding', 'fetchpriority', 'class', 'data-jio-browser-fixture'];
 const attributeBaselines = new Map();
+const wordpressBaselines = new Map();
 
 async function attributesFromHtml(page, html) {
   return page.evaluate((markup) => {
@@ -71,13 +72,13 @@ async function recordWordPressBaseline(page, asset) {
   assert.ok(response.rendered_html.includes('<img'), 'Rendered image HTML was captured.');
   const baseline = await attributesFromHtml(page, response.baseline_html);
   assert.ok(baseline, 'WordPress baseline contains an image element.');
-  const previousBaseline = attributeBaselines.get(asset);
+  const previousBaseline = wordpressBaselines.get(asset);
   if (previousBaseline) {
     for (const name of preservedAttributes) {
       assert.equal(baseline[name] ?? null, previousBaseline[name] ?? null, `WordPress baseline ${name} remains stable across delivery settings (${asset}).`);
     }
   }
-  attributeBaselines.set(asset, baseline);
+  wordpressBaselines.set(asset, baseline);
   console.log(`WordPress pre-JIO HTML (${asset}, delivery ${response.frontend_delivery ? 'ON' : 'OFF'}): ${response.baseline_html}`);
   console.log(`WordPress post-JIO HTML (${asset}, delivery ${response.frontend_delivery ? 'ON' : 'OFF'}): ${response.rendered_html}`);
   const rendered = await attributesFromHtml(page, response.rendered_html);
@@ -185,8 +186,10 @@ try {
     await recordWordPressBaseline(page, 'png');
     await recordWordPressBaseline(page, 'jpeg');
     await openGutenberg(page);
-    await inspectLoadedImage(page, elementSelector('png'), 'image/png', responses, true, 'png');
-    await inspectLoadedImage(page, elementSelector('jpeg'), 'image/jpeg', responses, true, 'jpeg');
+    const png = await inspectLoadedImage(page, elementSelector('png'), 'image/png', responses, true, 'png');
+    const jpeg = await inspectLoadedImage(page, elementSelector('jpeg'), 'image/jpeg', responses, true, 'jpeg');
+    attributeBaselines.set('png', png.attributes);
+    attributeBaselines.set('jpeg', jpeg.attributes);
     assert.equal(await page.locator('picture').count(), 0);
   });
 
