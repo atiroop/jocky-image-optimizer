@@ -123,7 +123,16 @@ foreach ( array( $png, $jpeg ) as $asset ) {
 
 $block_markup = static function ( $asset, $link ) {
 	$id    = $asset['id'];
-	$image = wp_get_attachment_image( $id, 'full', false, array( 'alt' => 'JIO accessible image ' . $id, 'sizes' => '(max-width: 1200px) 100vw, 1200px' ) );
+	$image = wp_get_attachment_image(
+		$id,
+		'full',
+		false,
+		array(
+			'alt'      => 'JIO accessible image ' . $id,
+			'class'    => 'attachment-full size-full wp-image-' . $id,
+			'sizes'    => '(max-width: 1200px) 100vw, 1200px',
+		)
+	);
 	return '<!-- wp:image {"id":' . $id . ',"sizeSlug":"full","linkDestination":"custom"} -->' .
 		'<figure class="wp-block-image size-full"><a href="' . esc_url( $link ) . '">' . $image . '</a><figcaption>JIO browser caption ' . $id . '</figcaption></figure>' .
 		'<!-- /wp:image -->';
