@@ -128,17 +128,28 @@ $block_markup = static function ( $asset, $link ) {
 		'<figure class="wp-block-image size-full"><a href="' . esc_url( $link ) . '">' . $image . '</a><figcaption>JIO browser caption ' . $id . '</figcaption></figure>' .
 		'<!-- /wp:image -->';
 };
+$gutenberg_content = $block_markup( $png, home_url( '/jio-png-linked-target/' ) ) . $block_markup( $jpeg, home_url( '/jio-jpeg-linked-target/' ) );
+foreach ( array( $png, $jpeg ) as $asset ) {
+	jio_browser_require( str_contains( $gutenberg_content, 'wp-image-' . $asset['id'] ), 'wp_get_attachment_image() omitted the expected Gutenberg image class for attachment ' . $asset['id'] . '.' );
+}
 $gutenberg_id = wp_insert_post(
 	array(
 		'post_type'    => 'page',
 		'post_status'  => 'publish',
 		'post_title'   => 'JIO Browser Gutenberg Fixture',
 		'post_name'    => 'jio-browser-gutenberg',
-		'post_content' => $block_markup( $png, home_url( '/jio-png-linked-target/' ) ) . $block_markup( $jpeg, home_url( '/jio-jpeg-linked-target/' ) ),
+		'post_content' => $gutenberg_content,
 	),
 	true
 );
 jio_browser_require( ! is_wp_error( $gutenberg_id ), 'Could not create the Gutenberg fixture page.' );
+$stored_gutenberg_content = (string) get_post_field( 'post_content', $gutenberg_id );
+foreach ( array( $png, $jpeg ) as $asset ) {
+	if ( ! str_contains( $stored_gutenberg_content, 'wp-image-' . $asset['id'] ) ) {
+		fwrite( STDERR, 'WordPress did not retain Gutenberg image markup for attachment ' . $asset['id'] . '; stored content prefix: ' . substr( $stored_gutenberg_content, 0, 1200 ) . PHP_EOL );
+		exit( 1 );
+	}
+}
 
 $elementor_id = wp_insert_post(
 	array(

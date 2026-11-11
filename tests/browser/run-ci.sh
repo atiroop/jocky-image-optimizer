@@ -181,8 +181,12 @@ check_http_200 'Gutenberg fixture' "$GUTENBERG_URL" "$RUNNER_TEMP/jio-gutenberg-
 for attachment_id in "$PNG_ATTACHMENT_ID" "$JPEG_ATTACHMENT_ID"; do
 	if ! grep -Fq "wp-image-${attachment_id}" "$RUNNER_TEMP/jio-gutenberg-preflight.html"; then
 		readonly POST_STATUS="$(php "$WP_CLI_PHAR" --allow-root --path="$WP_CORE_DIR" post get "$GUTENBERG_PAGE_ID" --field=post_status)"
-		readonly CONTENT_HAS_IMAGE="$(php "$WP_CLI_PHAR" --allow-root --path="$WP_CORE_DIR" post get "$GUTENBERG_PAGE_ID" --field=post_content | grep -Fq "wp-image-${attachment_id}" && echo yes || echo no)"
+		readonly POST_CONTENT="$(php "$WP_CLI_PHAR" --allow-root --path="$WP_CORE_DIR" post get "$GUTENBERG_PAGE_ID" --field=post_content)"
+		readonly CONTENT_HAS_IMAGE="$(grep -Fq "wp-image-${attachment_id}" <<< "$POST_CONTENT" && echo yes || echo no)"
 		echo "Gutenberg HTTP 200 page omitted wp-image-${attachment_id}; page_id=$GUTENBERG_PAGE_ID status=$POST_STATUS stored_content_has_image=$CONTENT_HAS_IMAGE URL=$GUTENBERG_URL" >&2
+		echo 'Stored Gutenberg content prefix:' >&2
+		printf '%s' "$POST_CONTENT" | head -c 1200 >&2
+		echo >&2
 		echo 'Server response body prefix:' >&2
 		head -c 800 "$RUNNER_TEMP/jio-gutenberg-preflight.html" >&2
 		echo >&2
