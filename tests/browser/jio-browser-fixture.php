@@ -137,6 +137,18 @@ add_action(
 			exit;
 		}
 
+		if ( 'elementor-preflight' === $action ) {
+			if ( ! class_exists( '\\Elementor\\Plugin' ) || ! defined( 'ELEMENTOR_VERSION' ) ) {
+				status_header( 503 );
+				exit;
+			}
+			header( 'Content-Type: text/plain; charset=UTF-8' );
+			header( 'Cache-Control: no-store, no-cache, must-revalidate, max-age=0' );
+			header( 'X-JIO-Elementor-Version: ' . rawurlencode( (string) ELEMENTOR_VERSION ) );
+			echo 'Elementor is active.';
+			exit;
+		}
+
 		if ( 'elementor' === $action ) {
 			$elementor = class_exists( '\Elementor\Plugin' ) ? \Elementor\Plugin::instance() : null;
 			if ( ! is_object( $elementor ) || ! isset( $elementor->frontend ) ) {

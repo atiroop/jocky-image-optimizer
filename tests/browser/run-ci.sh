@@ -151,10 +151,11 @@ readonly GUTENBERG_FIXTURE_URL="$(php -r '$f=json_decode(stream_get_contents(STD
 readonly PNG_ATTACHMENT_ID="$(php -r '$f=json_decode(stream_get_contents(STDIN), true); echo $f["attachments"]["png"]["id"] ?? "";' <<< "$FIXTURE_JSON")"
 readonly JPEG_ATTACHMENT_ID="$(php -r '$f=json_decode(stream_get_contents(STDIN), true); echo $f["attachments"]["jpeg"]["id"] ?? "";' <<< "$FIXTURE_JSON")"
 readonly ELEMENTOR_URL="$(php -r '$f=json_decode(stream_get_contents(STDIN), true); echo $f["elementor_url"] ?? "";' <<< "$FIXTURE_JSON")"
+readonly ELEMENTOR_PREFLIGHT_URL="$(php -r '$f=json_decode(stream_get_contents(STDIN), true); echo $f["elementor_preflight_url"] ?? "";' <<< "$FIXTURE_JSON")"
 readonly ELEMENTOR_TOKEN="$(php -r '$f=json_decode(stream_get_contents(STDIN), true); echo $f["elementor_token"] ?? "";' <<< "$FIXTURE_JSON")"
 readonly CLI_ELEMENTOR_ACTIVE="$(php "$WP_CLI_PHAR" --allow-root --path="$WP_CORE_DIR" eval 'echo class_exists("\\Elementor\\Plugin") ? "yes" : "no";')"
 
-for url in "$GUTENBERG_URL" "$GUTENBERG_FIXTURE_URL" "$ELEMENTOR_URL"; do
+for url in "$GUTENBERG_URL" "$GUTENBERG_FIXTURE_URL" "$ELEMENTOR_URL" "$ELEMENTOR_PREFLIGHT_URL"; do
 	if [[ "$url" != "$SITE_URL/"* ]]; then
 		echo "Fixture URL is outside the intended origin $SITE_URL: $url" >&2
 		exit 1
@@ -195,7 +196,7 @@ for attachment_id in "$PNG_ATTACHMENT_ID" "$JPEG_ATTACHMENT_ID"; do
 done
 readonly ELEMENTOR_STATUS="$(curl --silent --dump-header "$RUNNER_TEMP/jio-elementor-preflight.headers" \
 	--output "$RUNNER_TEMP/jio-elementor-preflight.html" --write-out '%{http_code}' \
-	-H "X-JIO-Browser-Token: $ELEMENTOR_TOKEN" "$ELEMENTOR_URL" 2>/dev/null || true)"
+	-H "X-JIO-Browser-Token: $ELEMENTOR_TOKEN" "$ELEMENTOR_PREFLIGHT_URL" 2>/dev/null || true)"
 if [[ "$ELEMENTOR_STATUS" != '200' ]] || ! grep -qi "^X-JIO-Elementor-Version: ${ELEMENTOR_VERSION}" "$RUNNER_TEMP/jio-elementor-preflight.headers"; then
 	echo "Elementor fixture preflight failed: expected HTTP 200 and runtime version ${ELEMENTOR_VERSION}." >&2
 	tail -n 30 "$RUNNER_TEMP/jio-browser-php-server.log" >&2

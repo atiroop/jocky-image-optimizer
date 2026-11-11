@@ -229,6 +229,7 @@ update_option(
 		'elementor'          => ELEMENTOR_VERSION,
 		'gutenberg_url'      => get_permalink( $gutenberg_id ),
 		'elementor_url'      => home_url( '/?jio_browser=elementor' ),
+		'elementor_preflight_url' => home_url( '/?jio_browser=elementor-preflight' ),
 		'elementor_page_id'  => (int) $elementor_id,
 		'elementor_token'    => get_option( 'jio_browser_secret' ),
 		'original_hashes'    => array( 'png' => $png['sha256'], 'jpeg' => $jpeg['sha256'] ),
