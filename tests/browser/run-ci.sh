@@ -7,6 +7,7 @@ set -euo pipefail
 : "${JIO_VERSION:?JIO_VERSION is required}"
 
 readonly WP_VERSION='7.1.4'
+readonly WP_CORE_SHA1='b552c39cd95d89895b4e7a55af53a03687aff4f6'
 readonly ELEMENTOR_VERSION='4.4.0'
 readonly ELEMENTOR_SHA256='EA023ED8F86106BC862E91269190FE95A725A865049C53A0035F0CCC668D69C2'
 readonly WP_CLI_VERSION='2.12.0'
@@ -51,8 +52,11 @@ printf '%s  %s\n' "$ELEMENTOR_SHA256" "$ELEMENTOR_ZIP" | sha256sum --check --sta
 php tests/browser/verify-elementor.php "$ELEMENTOR_METADATA" "$ELEMENTOR_VERSION" "$WP_VERSION" 8.3 "$ELEMENTOR_ZIP"
 
 # Install a clean WordPress 7.1.4 site and verify core checksums.
-php "$WP_CLI_PHAR" --allow-root --path="$WP_CORE_DIR" core download --version="$WP_VERSION" --locale=en_US
-php "$WP_CLI_PHAR" --allow-root --path="$WP_CORE_DIR" core verify-checksums --version="$WP_VERSION"
+readonly WP_CORE_ARCHIVE="$RUNNER_TEMP/wordpress-${WP_VERSION}.zip"
+curl --fail --silent --show-error --location --output "$WP_CORE_ARCHIVE" "https://wordpress.org/wordpress-${WP_VERSION}.zip"
+printf '%s  %s\n' "$WP_CORE_SHA1" "$WP_CORE_ARCHIVE" | sha1sum --check --status
+unzip -t "$WP_CORE_ARCHIVE"
+unzip -q "$WP_CORE_ARCHIVE" -d "$RUNNER_TEMP"
 mkdir -p "$WP_CORE_DIR/wp-content/plugins" "$WP_CORE_DIR/wp-content/mu-plugins"
 unzip -q "$PACKAGE_ZIP" -d "$WP_CORE_DIR/wp-content/plugins"
 unzip -q "$ELEMENTOR_ZIP" -d "$WP_CORE_DIR/wp-content/plugins"
