@@ -148,6 +148,8 @@ fi
 readonly GUTENBERG_PAGE_ID="$(php "$WP_CLI_PHAR" --allow-root --path="$WP_CORE_DIR" option get jio_browser_gutenberg_page)"
 readonly GUTENBERG_URL="$(php "$WP_CLI_PHAR" --allow-root --path="$WP_CORE_DIR" eval "echo get_permalink(${GUTENBERG_PAGE_ID});")"
 readonly GUTENBERG_FIXTURE_URL="$(php -r '$f=json_decode(stream_get_contents(STDIN), true); echo $f["gutenberg_url"] ?? "";' <<< "$FIXTURE_JSON")"
+readonly PNG_ATTACHMENT_ID="$(php -r '$f=json_decode(stream_get_contents(STDIN), true); echo $f["attachments"]["png"]["id"] ?? "";' <<< "$FIXTURE_JSON")"
+readonly JPEG_ATTACHMENT_ID="$(php -r '$f=json_decode(stream_get_contents(STDIN), true); echo $f["attachments"]["jpeg"]["id"] ?? "";' <<< "$FIXTURE_JSON")"
 readonly ELEMENTOR_URL="$(php -r '$f=json_decode(stream_get_contents(STDIN), true); echo $f["elementor_url"] ?? "";' <<< "$FIXTURE_JSON")"
 readonly ELEMENTOR_TOKEN="$(php -r '$f=json_decode(stream_get_contents(STDIN), true); echo $f["elementor_token"] ?? "";' <<< "$FIXTURE_JSON")"
 readonly CLI_ELEMENTOR_ACTIVE="$(php "$WP_CLI_PHAR" --allow-root --path="$WP_CORE_DIR" eval 'echo class_exists("\\Elementor\\Plugin") ? "yes" : "no";')"
@@ -176,6 +178,17 @@ check_http_200() {
 }
 
 check_http_200 'Gutenberg fixture' "$GUTENBERG_URL" "$RUNNER_TEMP/jio-gutenberg-preflight.html"
+for attachment_id in "$PNG_ATTACHMENT_ID" "$JPEG_ATTACHMENT_ID"; do
+	if ! grep -Fq "wp-image-${attachment_id}" "$RUNNER_TEMP/jio-gutenberg-preflight.html"; then
+		readonly POST_STATUS="$(php "$WP_CLI_PHAR" --allow-root --path="$WP_CORE_DIR" post get "$GUTENBERG_PAGE_ID" --field=post_status)"
+		readonly CONTENT_HAS_IMAGE="$(php "$WP_CLI_PHAR" --allow-root --path="$WP_CORE_DIR" post get "$GUTENBERG_PAGE_ID" --field=post_content | grep -Fq "wp-image-${attachment_id}" && echo yes || echo no)"
+		echo "Gutenberg HTTP 200 page omitted wp-image-${attachment_id}; page_id=$GUTENBERG_PAGE_ID status=$POST_STATUS stored_content_has_image=$CONTENT_HAS_IMAGE URL=$GUTENBERG_URL" >&2
+		echo 'Server response body prefix:' >&2
+		head -c 800 "$RUNNER_TEMP/jio-gutenberg-preflight.html" >&2
+		echo >&2
+		exit 1
+	fi
+done
 readonly ELEMENTOR_STATUS="$(curl --silent --dump-header "$RUNNER_TEMP/jio-elementor-preflight.headers" \
 	--output "$RUNNER_TEMP/jio-elementor-preflight.html" --write-out '%{http_code}' \
 	-H "X-JIO-Browser-Token: $ELEMENTOR_TOKEN" "$ELEMENTOR_URL" 2>/dev/null || true)"
@@ -195,7 +208,7 @@ for asset in png jpeg; do
 		exit 1
 	fi
 done
-printf 'Preflight passed: Gutenberg, Elementor %s, and both synthetic originals are HTTP-accessible from %s.\n' "$ELEMENTOR_VERSION" "$SITE_URL"
+printf 'Preflight passed: Gutenberg page %s (%s), Elementor %s, and both synthetic originals are HTTP-accessible from %s.\n' "$GUTENBERG_PAGE_ID" "$GUTENBERG_URL" "$ELEMENTOR_VERSION" "$SITE_URL"
 
 cd "$GITHUB_WORKSPACE/tests/browser"
 npm ci --no-audit --no-fund

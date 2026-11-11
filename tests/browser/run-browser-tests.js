@@ -115,6 +115,11 @@ async function inspectLoadedImage(page, selector, expectedMime, responses, expec
 async function openGutenberg(page) {
   const response = await page.goto(fixture.gutenberg_url, { waitUntil: 'networkidle' });
   assert.equal(response.status(), 200);
+  const rendered = await page.locator('img').evaluateAll((images) => images.map((img) => img.className));
+  console.log(`Gutenberg page ${response.url()} returned ${rendered.length} image tags: ${JSON.stringify(rendered)}`);
+  for (const asset of ['png', 'jpeg']) {
+    assert.ok(rendered.some((className) => className.split(/\s+/).includes(`wp-image-${fixture.attachments[asset].id}`)), `Gutenberg rendered the ${asset} attachment image.`);
+  }
 }
 
 async function openElementor(page, responses) {
