@@ -578,7 +578,7 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 		$this->assertStringContainsString( 'src="' . esc_url( wp_get_attachment_image_url( $attachment_id, 'full' ) ) . '"', $elementor_picture );
 		$this->assertStringContainsString( '<a href="https://example.test/image-target/">', $elementor_picture, 'The original Elementor link is retained.' );
 		$this->assertStringContainsString( '<figcaption>Image caption</figcaption>', $elementor_picture, 'The original Elementor caption is retained outside picture markup.' );
-		$this->assertLessThan( strpos( $elementor_picture, '<picture>' ), strpos( $elementor_picture, '<figcaption>' ), 'Picture markup remains scoped to the image and does not wrap its caption.' );
+		$this->assertLessThan( strpos( $elementor_picture, '<figcaption>' ), strpos( $elementor_picture, '<picture>' ), 'Picture markup remains scoped to the image and does not wrap its caption.' );
 		$content_picture = $delivery->content_image( $delivery_input, 'the_content', $attachment_id );
 		$this->assertStringContainsString( '<picture>', $content_picture, 'core-recognized content image receives the same safe delivery wrapper' );
 		$this->assertStringContainsString( 'src="' . esc_url( wp_get_attachment_image_url( $attachment_id, 'full' ) ) . '"', $content_picture );
