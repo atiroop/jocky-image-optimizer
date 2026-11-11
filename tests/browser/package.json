@@ -1,0 +1,9 @@
+{
+  "name": "jio-frontend-browser-tests",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Disposable WordPress browser acceptance tests for Jocky Image Optimizer.",
+  "devDependencies": {
+    "playwright": "1.65.0"
+  }
+}

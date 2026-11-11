@@ -1,0 +1,250 @@
+const assert = require('node:assert/strict');
+const { chromium } = require('playwright');
+
+const fixture = JSON.parse(process.env.JIO_BROWSER_FIXTURE || '{}');
+const baseUrl = process.env.JIO_BROWSER_BASE_URL || '';
+assert.ok(baseUrl.startsWith('http://127.0.0.1:'), 'Browser suite must target the disposable local HTTP site.');
+assert.equal(fixture.wordpress, '7.1.4', 'Browser matrix must use the pinned WordPress version.');
+assert.equal(fixture.elementor, '4.4.0', 'Browser matrix must use the pinned Elementor version.');
+
+const failures = [];
+const browser = await chromium.launch({ headless: true });
+console.log(`Playwright Chromium ${browser.version()}; WordPress ${fixture.wordpress}; Elementor ${fixture.elementor}`);
+
+async function withPage(viewport, callback) {
+  const context = await browser.newContext({ viewport, deviceScaleFactor: 1 });
+  const page = await context.newPage();
+  const responses = new Map();
+  page.on('requestfailed', (request) => {
+    if (request.resourceType() === 'image') failures.push(`${request.url()} failed: ${request.failure()?.errorText}`);
+  });
+  page.on('response', (response) => {
+    if (response.request().resourceType() !== 'image') return;
+    responses.set(response.url(), {
+      status: response.status(),
+      mime: (response.headers()['content-type'] || '').split(';')[0].toLowerCase(),
+    });
+    if (response.status() >= 400) failures.push(`${response.url()} returned ${response.status()}`);
+  });
+  try {
+    await callback(page, responses);
+    assert.deepEqual(failures, [], 'No broken image requests are allowed.');
+  } finally {
+    await context.close();
+  }
+}
+
+function controlUrl(parameters) {
+  const url = new URL('/?jio_browser=control', baseUrl);
+  url.searchParams.set('token', fixture.elementor_token);
+  for (const [key, value] of Object.entries(parameters)) url.searchParams.set(key, String(value));
+  return url.toString();
+}
+
+async function control(parameters) {
+  const response = await fetch(controlUrl(parameters), { cache: 'no-store' });
+  assert.equal(response.status, 200, `Fixture control failed: ${parameters.operation}`);
+  return response.json();
+}
+
+function elementSelector(asset) {
+  return `img.wp-image-${fixture.attachments[asset].id}`;
+}
+
+async function inspectLoadedImage(page, selector, expectedMime, responses, expectedOriginal = false, expectedAsset = null) {
+  const image = page.locator(selector).first();
+  await image.waitFor({ state: 'attached' });
+  await page.waitForFunction((query) => {
+    const img = document.querySelector(query);
+    return img instanceof HTMLImageElement && img.complete && img.naturalWidth > 0;
+  }, selector);
+  const result = await image.evaluate((img) => ({
+    src: img.getAttribute('src'),
+    srcset: img.getAttribute('srcset'),
+    sizes: img.getAttribute('sizes'),
+    widthAttribute: img.getAttribute('width'),
+    heightAttribute: img.getAttribute('height'),
+    currentSrc: img.currentSrc,
+    alt: img.alt,
+    width: img.width,
+    height: img.height,
+    naturalWidth: img.naturalWidth,
+    naturalHeight: img.naturalHeight,
+    loading: img.getAttribute('loading'),
+    decoding: img.getAttribute('decoding'),
+    fetchpriority: img.getAttribute('fetchpriority'),
+    fixtureAttribute: img.getAttribute('data-jio-browser-fixture'),
+    responsiveWebp: img.closest('picture')?.querySelector('source[type="image/webp"]')?.srcset || '',
+    responsiveSizes: img.closest('picture')?.querySelector('source[type="image/webp"]')?.sizes || '',
+    hasPicture: Boolean(img.closest('picture')),
+    pictureCount: document.querySelectorAll('picture').length,
+    nestedPictures: document.querySelectorAll('picture picture').length,
+    picture: img.closest('picture')?.outerHTML || '',
+  }));
+  assert.ok(result.naturalWidth > 0 && result.naturalHeight > 0, 'The browser decoded a non-empty image.');
+  assert.ok(result.width > 0 && result.height > 0, 'Intrinsic display dimensions are present.');
+  assert.ok(result.alt.length > 0, 'Accessible alt text is preserved.');
+  assert.ok(result.fixtureAttribute, 'Custom WordPress image attributes are preserved.');
+  assert.equal(result.loading, 'lazy', 'Lazy loading is preserved.');
+  assert.equal(result.decoding, 'async', 'Async decoding is preserved.');
+  assert.equal(result.fetchpriority, 'low', 'Fetch priority is preserved.');
+  assert.equal(result.nestedPictures, 0, 'Delivery must never nest picture wrappers.');
+  const asset = expectedAsset || (selector.includes('jioimg1') ? 'png' : selector.includes('jioibox1') ? 'jpeg' : selector.includes(String(fixture.attachments.jpeg.id)) ? 'jpeg' : 'png');
+  assert.equal(Number(result.widthAttribute), Number(fixture.attachments[asset].metadata.width), 'Original width attribute is preserved.');
+  assert.equal(Number(result.heightAttribute), Number(fixture.attachments[asset].metadata.height), 'Original height attribute is preserved.');
+  if (expectedOriginal) {
+    assert.equal(result.src, new URL(fixture.attachments[asset].url).href, 'Fallback src remains the original attachment URL.');
+    assert.ok(!result.currentSrc.includes('.jio.'), 'Browser selected a WordPress original responsive candidate.');
+    assert.equal(result.hasPicture, false, 'Uncertain or unavailable derivatives leave the original image markup unchanged.');
+    assert.equal(responses.get(result.currentSrc)?.mime, asset === 'jpeg' ? 'image/jpeg' : 'image/png');
+  } else {
+    assert.equal(result.hasPicture, true, 'An eligible derivative is emitted in one picture wrapper.');
+    const requested = responses.get(result.currentSrc);
+    assert.ok(requested, 'The selected derivative must have a real browser network response.');
+    assert.equal(requested.status, 200);
+    assert.equal(requested.mime, expectedMime, 'The selected resource MIME must match the browser-selected source format.');
+    assert.ok(result.currentSrc.includes('.jio.'), 'The loaded image must be a registered derivative URL.');
+    assert.ok(result.picture.includes(`type="${expectedMime}"`), 'The picture contains the selected format source.');
+  }
+  console.log(`Loaded ${expectedOriginal ? 'original' : expectedMime}: ${result.currentSrc} (${result.naturalWidth}x${result.naturalHeight})`);
+  return result;
+}
+
+async function openGutenberg(page) {
+  const response = await page.goto(fixture.gutenberg_url, { waitUntil: 'networkidle' });
+  assert.equal(response.status(), 200);
+}
+
+async function openElementor(page, responses) {
+  const url = new URL('/?jio_browser=elementor', baseUrl);
+  url.searchParams.set('token', fixture.elementor_token);
+  const response = await page.goto(url.toString(), { waitUntil: 'networkidle' });
+  assert.equal(response.status(), 200, 'The actual Elementor frontend rendering API must return successfully.');
+  assert.equal(response.headers()['x-jio-elementor-version'], fixture.elementor);
+  const lookupCount = Number(response.headers()['x-jio-registry-lookups']);
+  assert.ok(Number.isFinite(lookupCount) && lookupCount <= 8, `Frontend derivative registry queries are bounded; saw ${lookupCount}.`);
+  assert.ok(!response.request().url().includes('wp-admin'), 'Elementor rendering occurs on a frontend request.');
+  return responses;
+}
+
+try {
+  assert.equal(fixture.attachments.png.sha256, fixture.original_hashes.png);
+  assert.equal(fixture.attachments.jpeg.sha256, fixture.original_hashes.jpeg);
+
+  // Delivery OFF must leave ordinary Gutenberg content on the original files.
+  let state = await control({ operation: 'settings', enabled: 0, preference: 'auto' });
+  assert.equal(state.frontend_delivery, false);
+  await withPage({ width: 1280, height: 900 }, async (page, responses) => {
+    await openGutenberg(page);
+    await inspectLoadedImage(page, elementSelector('png'), 'image/png', responses, true, 'png');
+    await inspectLoadedImage(page, elementSelector('jpeg'), 'image/jpeg', responses, true, 'jpeg');
+    assert.equal(await page.locator('picture').count(), 0);
+  });
+
+  // Auto mode: Chromium must actually request/decode AVIF for Gutenberg and Elementor.
+  state = await control({ operation: 'settings', enabled: 1, preference: 'auto' });
+  assert.equal(state.cache_notice, 'manual', 'A real setting update records the external-cache purge notice.');
+  assert.equal(state.wp_rocket_available, false, 'WP Rocket is intentionally absent from this test installation.');
+  await withPage({ width: 1280, height: 900 }, async (page, responses) => {
+    await openGutenberg(page);
+    const png = await inspectLoadedImage(page, elementSelector('png'), 'image/avif', responses);
+    assert.ok(png.picture.indexOf('type="image/avif"') < png.picture.indexOf('type="image/webp"'), 'Auto mode orders AVIF before WebP.');
+    await inspectLoadedImage(page, elementSelector('jpeg'), 'image/avif', responses);
+  });
+
+  await withPage({ width: 1280, height: 900 }, async (page, responses) => {
+    await openElementor(page, responses);
+    const imageWidget = await inspectLoadedImage(page, '[data-id="jioimg1"] img', 'image/avif', responses);
+    const imageBox = await inspectLoadedImage(page, '[data-id="jioibox1"] img', 'image/avif', responses);
+    assert.ok(imageWidget.currentSrc.endsWith('.jio.avif'));
+    assert.ok(imageBox.currentSrc.endsWith('.jio.avif'));
+    assert.equal(await page.locator('[data-id="jioimg1"] a').getAttribute('href'), `${baseUrl}/elementor-image-target/`);
+    assert.match(await page.locator('[data-id="jioimg1"]').innerText(), /JIO Elementor image caption/);
+    assert.match(await page.locator('[data-id="jioibox1"]').innerText(), /JIO Elementor Image Box/);
+    const background = await page.locator('[data-id="jiobg01"]').evaluate((element) => ({
+      image: getComputedStyle(element).backgroundImage,
+      pictures: element.querySelectorAll('picture').length,
+      img: element.querySelectorAll('img').length,
+    }));
+    assert.ok(background.image.includes(new URL(fixture.attachments.jpeg.url).pathname), 'Elementor background keeps its original URL.');
+    assert.equal(background.pictures, 0, 'Unsupported background images remain untouched.');
+    assert.equal(background.img, 0, 'Unsupported background images remain CSS backgrounds.');
+    console.log('Elementor Image and Image Box rendered through Elementor 4.4.0; CSS background retained its original source.');
+  });
+
+  // Prefer-WebP and WebP-only source sets must result in actual WebP transfers.
+  await control({ operation: 'settings', enabled: 1, preference: 'webp_only' });
+  await withPage({ width: 1280, height: 900 }, async (page, responses) => {
+    await openGutenberg(page);
+    await inspectLoadedImage(page, elementSelector('png'), 'image/webp', responses);
+    await inspectLoadedImage(page, elementSelector('jpeg'), 'image/webp', responses);
+    assert.equal(await page.locator('source[type="image/avif"]').count(), 0);
+  });
+
+  // A stale current-file identity is rejected and the original PNG is loaded.
+  state = await control({ operation: 'stale', asset: 'png' });
+  assert.ok(state.derivative_identities.every((identity) => identity === 'stale-browser-file-identity'));
+  await withPage({ width: 1280, height: 900 }, async (page, responses) => {
+    await openGutenberg(page);
+    await inspectLoadedImage(page, elementSelector('png'), 'image/png', responses, true, 'png');
+  });
+  state = await control({ operation: 'reoptimize', asset: 'png' });
+  assert.ok(state.derivative_identities.length > 0 && state.derivative_identities.every((identity) => identity.length > 0), 'Reoptimization restores a current identity after stale fallback.');
+
+  // Request a narrow viewport and ensure Chromium selects an appropriate responsive derivative.
+  await withPage({ width: 360, height: 800 }, async (page, responses) => {
+    await openGutenberg(page);
+    const result = await inspectLoadedImage(page, elementSelector('png'), 'image/webp', responses);
+    assert.ok(result.srcset, 'WordPress responsive fallback srcset is preserved.');
+    assert.ok(result.sizes, 'WordPress sizes is preserved.');
+    const selected = result.responsiveWebp.split(',').map((candidate) => candidate.trim()).find((candidate) => {
+      const [url] = candidate.split(/\s+/, 1);
+      return new URL(url, fixture.gutenberg_url).href === result.currentSrc;
+    });
+    assert.ok(selected, 'The browser-selected resource belongs to the WebP responsive source set.');
+    assert.ok(result.responsiveSizes, 'Responsive format sources preserve sizes.');
+    const width = Number(selected.match(/\s(\d+)w$/)?.[1] || 0);
+    assert.ok(width > 0 && width < 1200, `Narrow viewport should select a smaller candidate; selected ${width}w.`);
+    console.log(`Responsive Chromium candidate at 360px viewport: ${width}w.`);
+  });
+
+  // Simulate a genuine legacy registry record, verify fallback, then regenerate through the queue worker.
+  state = await control({ operation: 'legacy', asset: 'jpeg' });
+  assert.ok(state.derivative_identities.every((identity) => identity === ''), 'Legacy test rows have no current file identity.');
+  await withPage({ width: 1280, height: 900 }, async (page, responses) => {
+    await openElementor(page, responses);
+    await inspectLoadedImage(page, '[data-id="jioibox1"] img', 'image/jpeg', responses, true, 'jpeg');
+    assert.equal(await page.locator('[data-id="jioibox1"] picture').count(), 0);
+  });
+  state = await control({ operation: 'reoptimize', asset: 'jpeg' });
+  assert.ok(state.derivative_identities.length > 0 && state.derivative_identities.every((identity) => identity.length > 0), 'Reoptimization writes current derivative identity metadata.');
+  await withPage({ width: 1280, height: 900 }, async (page, responses) => {
+    await openElementor(page, responses);
+    await inspectLoadedImage(page, '[data-id="jioibox1"] img', 'image/avif', responses);
+  });
+
+  // Remove only synthetic JPEG derivative files and rows; the original remains available.
+  await control({ operation: 'missing', asset: 'jpeg' });
+  await withPage({ width: 1280, height: 900 }, async (page, responses) => {
+    await openElementor(page, responses);
+    await inspectLoadedImage(page, '[data-id="jioibox1"] img', 'image/jpeg', responses, true, 'jpeg');
+  });
+
+  // Rollback is an uncached HTTP request with the real setting OFF.
+  state = await control({ operation: 'settings', enabled: 0, preference: 'auto' });
+  assert.equal(state.frontend_delivery, false);
+  await withPage({ width: 1280, height: 900 }, async (page, responses) => {
+    await openGutenberg(page);
+    await inspectLoadedImage(page, elementSelector('png'), 'image/png', responses, true, 'png');
+    assert.equal(await page.locator('picture').count(), 0, 'Disabling delivery restores original-only uncached HTML.');
+  });
+
+  for (const asset of ['png', 'jpeg']) {
+    state = await control({ operation: 'settings', enabled: 0, preference: 'auto', asset });
+    assert.equal(state.original_sha256, fixture.original_hashes[asset], `Original ${asset} bytes remained unchanged.`);
+    assert.deepEqual(state.attachment_metadata, fixture.original_metadata[asset], `WordPress ${asset} attachment metadata remained unchanged.`);
+  }
+  console.log('PASS: OFF, WebP, Auto AVIF, responsive selection, Gutenberg, Elementor, legacy rejection, reoptimization, missing derivatives, rollback, metadata, and network integrity.');
+} finally {
+  await browser.close();
+}

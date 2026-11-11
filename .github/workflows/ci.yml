@@ -158,9 +158,48 @@ jobs:
           avifdec --version
           composer test:encoders
 
+  frontend-browser-integration:
+    runs-on: ubuntu-24.04
+    needs: static-and-unit
+    timeout-minutes: 35
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: wordpress_browser
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -proot"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
+        with:
+          php-version: '8.3'
+          extensions: gd, mysqli, zip
+          tools: composer:v2
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22.16.0'
+      - name: Resolve and validate release version
+        id: release-version
+        run: echo "version=$(php scripts/get-version.php)" >> "$GITHUB_OUTPUT"
+      - name: Install pinned WebP and AVIF encoders
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y webp=1.3.2-0.4build3 libavif-bin=1.0.4-1ubuntu3
+      - name: Install Elementor and run disposable browser acceptance
+        env:
+          JIO_VERSION: ${{ steps.release-version.outputs.version }}
+        run: bash tests/browser/run-ci.sh
+
   beta-package-artifact:
     runs-on: ubuntu-24.04
-    needs: [static-and-unit, encoder-integration, wordpress-integration]
+    needs: [static-and-unit, encoder-integration, wordpress-integration, frontend-browser-integration]
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
       - uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2

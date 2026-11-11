@@ -1,6 +1,10 @@
 # Validation
 
-## Milestone 6 — frontend delivery (CI verified)
+## Milestone 6 final acceptance — browser and Elementor validation pending
+
+The prior five-job run below verified the core implementation, but it did not install Elementor or run a browser. A dedicated disposable WordPress/Elementor/Chromium job is now configured; its results remain unverified until GitHub Actions completes for the current feature commit. Local WPCS, standalone, Composer, PHP syntax, npm audit, JavaScript syntax, actionlint, and Bash syntax checks passed on this Windows workspace. The actual WordPress/MySQL/encoder/Chromium suite cannot run locally.
+
+## Milestone 6 implementation baseline (before browser acceptance)
 
 Target release version is `0.6.0-beta.1`. The implementation is on `feature/milestone-6-frontend-delivery` at commit `1672531c028e3fbed4f839273089314280131be2`. GitHub Actions run [42935865495](https://github.com/atiroop/jocky-image-optimizer/actions/runs/42935865495) passed all five jobs: static/unit, real encoder integration, packaged WordPress integration on 6.6.11 and 7.1.4, and beta package artifact publication.
 
@@ -14,12 +18,12 @@ Target release version is `0.6.0-beta.1`. The implementation is on `feature/mile
 | Production ZIP | Passed locally | Built after `composer install --no-dev`; `composer test:package` passed. Filename `jocky-image-optimizer-0.6.0-beta.1.zip`, one top-level plugin directory, runtime autoloader included, dev dependencies excluded. SHA-256 `5BBF84DFF32C3D1E350D61E2D73A36CDD57E974F2A43A47DC3745E1767FE4C89`. |
 | WordPress integration | Passed in CI; not run locally | The CI jobs installed and exercised the generated production ZIP against WordPress 6.6.11 and 7.1.4 on PHP 8.3. Local `composer test:integration` could not start because this workspace lacks the WordPress test library and disposable database runtime. |
 | Real encoder tests | Passed in CI; not run locally | The isolated Linux encoder job installed trusted MozJPEG, pngquant, oxipng, WebP, and AVIF tools and passed real fixture tests. Local `composer test:encoders` is unavailable because encoder executables including `cjpeg` are not installed. |
-| Browser / Elementor runtime | Not run | Manual browser procedure is below. CI does not install Chromium or Elementor; fixture/core API tests are not reported as runtime compatibility tests. |
+| Browser / Elementor runtime | Pending current workflow | The earlier run did not install Chromium or Elementor. The new five-job workflow adds an isolated WordPress 7.1.4 + Elementor 4.4.0 + Chromium run; no pass is claimed until that run completes. |
 | Downloaded artifact | Passed | Artifact `jocky-image-optimizer-0.6.0-beta.1`, ID `13818128489`, is available from [run 42935865495](https://github.com/atiroop/jocky-image-optimizer/actions/runs/42935865495/artifacts/13818128489). Downloaded ZIP is 110,792 bytes, SHA-256 `28722693AB4DBF0FC9AE9321CC7EF3BB0AD9F0C2982EA496920A85A50D938D69`; `php scripts/validate-package.php` confirmed the exact expected one-directory production ZIP structure and runtime dependencies. |
 
 The module uses `wp_get_attachment_image` and `wp_content_img_tag`; original markup remains the fallback. The schema migration adds a nullable derivative file identity. Existing Milestone 5 rows are preserved, but rows with no identity are intentionally not served. They need re-optimization before frontend delivery can select them. The exact downloadable package passed both real WordPress matrix jobs and the artifact job.
 
-CI acceptance tests passed for actual packaged ZIP installation/activation, database setup, default-off delivery, real WebP/AVIF generation and selection, preference order, original fallback attributes and responsive candidates, stale derivative fallback, and disabling delivery. Browser-level Chromium execution and actual Elementor plugin execution are not configured; core API integration assertions do not establish browser/Elementor runtime compatibility. No production site, VPS, database, media, cache, or settings were accessed.
+The earlier five-job CI run passed actual packaged ZIP installation/activation, database setup, default-off delivery, real WebP/AVIF generation and selection, preference order, original fallback attributes and responsive candidates, stale derivative fallback, and disabling delivery. It did not establish browser-level Chromium or actual Elementor runtime compatibility. No production site, VPS, database, media, cache, or settings were accessed.
 
 ### Manual browser procedure (disposable staging only)
 
