@@ -246,7 +246,7 @@ try {
     assert.ok(imageWidget.currentSrc.endsWith('.jio.avif'));
     assert.ok(imageBox.currentSrc.endsWith('.jio.avif'));
     assert.equal(await page.locator('[data-id="jioimg1"] a').getAttribute('href'), `${baseUrl}/elementor-image-target/`);
-    assert.equal(await page.locator('[data-id="jioibox1"] a').getAttribute('href'), `${baseUrl}/elementor-box-target/`);
+    assert.equal(await page.locator('[data-id="jioibox1"] .elementor-image-box-img a').getAttribute('href'), `${baseUrl}/elementor-box-target/`);
     assert.match(await page.locator('[data-id="jioimg1"]').innerText(), /JIO Elementor image caption/);
     assert.match(await page.locator('[data-id="jioibox1"]').innerText(), /JIO Elementor Image Box/);
     const background = await page.locator('[data-id="jiobg01"]').evaluate((element) => ({
