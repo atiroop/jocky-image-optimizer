@@ -115,8 +115,8 @@ async function inspectLoadedImage(page, selector, expectedMime, responses, expec
     fixtureAttribute: img.getAttribute('data-jio-browser-fixture'),
     classAttribute: img.getAttribute('class'),
     attributes: Object.fromEntries(Array.from(img.attributes, (attribute) => [attribute.name, attribute.value])),
-    responsiveWebp: img.closest('picture')?.querySelector('source[type="image/webp"]')?.srcset || '',
-    responsiveSizes: img.closest('picture')?.querySelector('source[type="image/webp"]')?.sizes || '',
+    responsiveAvif: img.closest('picture')?.querySelector('source[type="image/avif"]')?.srcset || '',
+    responsiveSizes: img.closest('picture')?.querySelector('source[type="image/avif"]')?.sizes || '',
     hasPicture: Boolean(img.closest('picture')),
     pictureCount: document.querySelectorAll('picture').length,
     nestedPictures: document.querySelectorAll('picture picture').length,
@@ -302,15 +302,15 @@ try {
   // Request a narrow viewport and ensure Chromium selects an appropriate responsive derivative.
   await withPage({ width: 360, height: 800 }, async (page, responses) => {
     await openGutenberg(page);
-    const result = await inspectLoadedImage(page, elementSelector('png'), 'image/webp', responses);
+    const result = await inspectLoadedImage(page, elementSelector('png'), 'image/avif', responses);
     assert.ok(result.srcset, 'WordPress responsive fallback srcset is preserved.');
     assert.ok(result.sizes, 'WordPress sizes is preserved.');
-    const selected = result.responsiveWebp.split(',').map((candidate) => candidate.trim()).find((candidate) => {
+    const selected = result.responsiveAvif.split(',').map((candidate) => candidate.trim()).find((candidate) => {
       const [url] = candidate.split(/\s+/, 1);
       return new URL(url, fixture.gutenberg_url).href === result.currentSrc;
     });
-    assert.ok(selected, 'The browser-selected resource belongs to the WebP responsive source set.');
-    assert.ok(result.responsiveSizes, 'Responsive format sources preserve sizes.');
+    assert.ok(selected, 'The browser-selected resource belongs to the AVIF responsive source set selected by Auto preference.');
+    assert.ok(result.responsiveSizes, 'Responsive AVIF source preserves sizes.');
     const width = Number(selected.match(/\s(\d+)w$/)?.[1] || 0);
     assert.ok(width > 0 && width < 1200, `Narrow viewport should select a smaller candidate; selected ${width}w.`);
     console.log(`Responsive Chromium candidate at 360px viewport: ${width}w.`);
