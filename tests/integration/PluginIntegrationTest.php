@@ -523,7 +523,7 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 	public function test_frontend_delivery_is_default_off_and_wraps_owned_webp_with_original_fallback(): void {
 		$this->set_output_format( 'webp' );
 		[ $attachment_id, $source, $metadata ] = $this->create_png_attachment( 'delivery', true );
-		$original_html = wp_get_attachment_image( $attachment_id, 'full', false, array( 'alt' => 'safe image', 'class' => 'example', 'loading' => 'lazy', 'decoding' => 'async', 'sizes' => '(max-width: 600px) 100vw, 600px' ) );
+		$original_html = wp_get_attachment_image( $attachment_id, 'full', false, array( 'alt' => 'safe image', 'class' => 'example', 'loading' => 'lazy', 'decoding' => 'async' ) );
 		$this->assertFalse( Settings::sanitize( get_option( Plugin::OPTION_NAME ) )['frontend_delivery'] );
 		$this->assertStringNotContainsString( '<picture>', $original_html, 'default-off leaves WordPress markup untouched' );
 		$this->assertSame( 2, ( new MediaIntegration( $this->jobs, new QueueWorker( $this->jobs ) ) )->enqueue_attachment( $attachment_id ) );
@@ -536,8 +536,14 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 		$settings['frontend_delivery'] = true;
 		update_option( Plugin::OPTION_NAME, $settings );
 		$delivery = new FrontendDelivery();
+		$delivery_input = wp_get_attachment_image( $attachment_id, 'full', false, array( 'alt' => 'safe image', 'class' => 'example', 'loading' => 'lazy', 'decoding' => 'async' ) );
+		$input_tag      = new \WP_HTML_Tag_Processor( $delivery_input );
+		$this->assertTrue( $input_tag->next_tag( 'IMG' ) );
+		$input_tag->set_attribute( 'sizes', '(max-width: 600px) 100vw, 600px' );
+		$delivery_input = $input_tag->get_updated_html();
+		$this->assertIsString( $delivery_input );
 		$delivery->register();
-		$picture = wp_get_attachment_image( $attachment_id, 'full', false, array( 'alt' => 'safe image', 'class' => 'example', 'loading' => 'lazy', 'decoding' => 'async' ) );
+		$picture = apply_filters( 'wp_get_attachment_image', $delivery_input, $attachment_id, 'full', false, array() );
 		$this->assertStringContainsString( '<picture>', $picture );
 		$this->assertStringContainsString( 'type="image/webp"', $picture );
 		$this->assertStringContainsString( 'src="' . esc_url( wp_get_attachment_image_url( $attachment_id, 'full' ) ) . '"', $picture );
@@ -546,7 +552,7 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 		$this->assertStringContainsString( 'decoding="async"', $picture );
 		$this->assertStringContainsString( 'class="example"', $picture );
 		$this->assertStringContainsString( 'sizes=', $picture );
-		$content_picture = $delivery->content_image( $original_html, 'the_content', $attachment_id );
+		$content_picture = $delivery->content_image( $delivery_input, 'the_content', $attachment_id );
 		$this->assertStringContainsString( '<picture>', $content_picture, 'core-recognized content image receives the same safe delivery wrapper' );
 		$this->assertStringContainsString( 'src="' . esc_url( wp_get_attachment_image_url( $attachment_id, 'full' ) ) . '"', $content_picture );
 		$this->assertSame( $attached, get_post_meta( $attachment_id, '_wp_attached_file', true ) );
@@ -555,11 +561,11 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 		global $wpdb;
 		$wpdb->update( QueueSchema::derivatives_table(), array( 'derivative_identity' => 'stale-identity' ), array( 'id' => (int) $records[0]['id'] ), array( '%s' ), array( '%d' ) );
 		$stale_delivery = new FrontendDelivery();
-		$this->assertSame( $original_html, $stale_delivery->attachment_image( $original_html, $attachment_id, 'full', false, array() ), 'changed derivative identity safely falls back to original markup' );
+		$this->assertSame( $delivery_input, $stale_delivery->attachment_image( $delivery_input, $attachment_id, 'full', false, array() ), 'changed derivative identity safely falls back to original markup' );
 		$settings['frontend_delivery'] = false;
 		update_option( Plugin::OPTION_NAME, $settings );
 		$disabled = new FrontendDelivery();
-		$this->assertSame( $original_html, $disabled->attachment_image( $original_html, $attachment_id, 'full', false, array() ), 'disabling restores original markup for uncached requests' );
+		$this->assertSame( $delivery_input, $disabled->attachment_image( $delivery_input, $attachment_id, 'full', false, array() ), 'disabling restores original markup for uncached requests' );
 	}
 
 	public function test_frontend_delivery_prefers_avif_then_webp_and_retains_srcset_and_fallback(): void {
