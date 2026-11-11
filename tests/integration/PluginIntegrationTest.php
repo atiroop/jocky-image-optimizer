@@ -523,7 +523,7 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 	public function test_frontend_delivery_is_default_off_and_wraps_owned_webp_with_original_fallback(): void {
 		$this->set_output_format( 'webp' );
 		[ $attachment_id, $source, $metadata ] = $this->create_png_attachment( 'delivery', true );
-		$original_html = wp_get_attachment_image( $attachment_id, 'full', false, array( 'alt' => 'safe image', 'class' => 'example', 'loading' => 'lazy', 'decoding' => 'async' ) );
+		$original_html = wp_get_attachment_image( $attachment_id, 'full', false, array( 'alt' => 'safe image', 'class' => 'example', 'loading' => 'lazy', 'decoding' => 'async', 'sizes' => '(max-width: 600px) 100vw, 600px' ) );
 		$this->assertFalse( Settings::sanitize( get_option( Plugin::OPTION_NAME ) )['frontend_delivery'] );
 		$this->assertStringNotContainsString( '<picture>', $original_html, 'default-off leaves WordPress markup untouched' );
 		$this->assertSame( 2, ( new MediaIntegration( $this->jobs, new QueueWorker( $this->jobs ) ) )->enqueue_attachment( $attachment_id ) );
