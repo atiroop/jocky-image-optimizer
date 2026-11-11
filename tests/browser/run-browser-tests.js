@@ -141,7 +141,7 @@ async function inspectLoadedImage(page, selector, expectedMime, responses, expec
     assert.equal(result.hasPicture, false, 'Uncertain or unavailable derivatives leave the original image markup unchanged.');
     assert.equal(responses.get(result.currentSrc)?.mime, asset === 'jpeg' ? 'image/jpeg' : 'image/png');
   } else {
-    assert.equal(result.hasPicture, true, 'An eligible derivative is emitted in one picture wrapper.');
+    assert.equal(result.hasPicture, true, `An eligible derivative is emitted in one picture wrapper (${selector}); rendered image: ${result.picture || result.src}; currentSrc: ${result.currentSrc}`);
     const requested = responses.get(result.currentSrc);
     assert.ok(requested, 'The selected derivative must have a real browser network response.');
     assert.equal(requested.status, 200);
