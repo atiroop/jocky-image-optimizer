@@ -80,6 +80,15 @@ add_filter(
 		$trace_index    = count( $GLOBALS['jio_browser_elementor_trace'] );
 		$image_tag      = class_exists( '\\WP_HTML_Tag_Processor' ) ? new WP_HTML_Tag_Processor( $content ) : null;
 		$image_found    = $image_tag instanceof WP_HTML_Tag_Processor && $image_tag->next_tag( 'IMG' );
+		$baseline_attributes = array();
+		if ( $image_found ) {
+			foreach ( array( 'src', 'srcset', 'sizes', 'width', 'height', 'alt', 'loading', 'decoding', 'fetchpriority', 'class', 'data-jio-browser-fixture' ) as $attribute_name ) {
+				$attribute_value = $image_tag->get_attribute( $attribute_name );
+				if ( null !== $attribute_value ) {
+					$baseline_attributes[ $attribute_name ] = $attribute_value;
+				}
+			}
+		}
 		$GLOBALS['jio_browser_elementor_trace'][] = array(
 			'name'                   => $widget->get_name(),
 			'attachment_id'          => $attachment_id,
@@ -88,6 +97,7 @@ add_filter(
 			'picture_before_adapter' => str_contains( $content, '<picture' ),
 			'img_src_before_adapter' => $image_found ? $image_tag->get_attribute( 'src' ) : null,
 			'img_class_before_adapter' => $image_found ? $image_tag->get_attribute( 'class' ) : null,
+			'img_attributes_before_adapter' => $baseline_attributes,
 			'picture_after_adapter'  => false,
 		);
 		$GLOBALS['jio_browser_elementor_trace_indexes'][ spl_object_id( $widget ) ] = $trace_index;

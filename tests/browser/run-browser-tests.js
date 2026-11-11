@@ -175,6 +175,16 @@ async function openElementor(page, responses) {
   const traceHeader = response.headers()['x-jio-elementor-trace'] || '';
   assert.ok(traceHeader, 'Elementor runtime instrumentation returned its widget path trace.');
   const trace = JSON.parse(Buffer.from(traceHeader, 'base64').toString('utf8'));
+  attributeBaselines.delete('elementor-png');
+  attributeBaselines.delete('elementor-jpeg');
+  for (const entry of trace) {
+    const key = Number(entry.attachment_id) === Number(fixture.attachments.png.id)
+      ? 'elementor-png'
+      : Number(entry.attachment_id) === Number(fixture.attachments.jpeg.id)
+        ? 'elementor-jpeg'
+        : null;
+    if (key && entry.img_attributes_before_adapter) attributeBaselines.set(key, entry.img_attributes_before_adapter);
+  }
   const elementCache = response.headers()['x-jio-elementor-element-cache'];
   const documentCache = response.headers()['x-jio-elementor-document-cache'];
   assert.ok(['enabled', 'disabled'].includes(elementCache), 'Elementor Element Cache state is reported.');
