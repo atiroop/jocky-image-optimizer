@@ -55,8 +55,9 @@ php tests/browser/verify-elementor.php "$ELEMENTOR_METADATA" "$ELEMENTOR_VERSION
 readonly WP_CORE_ARCHIVE="$RUNNER_TEMP/wordpress-${WP_VERSION}.zip"
 curl --fail --silent --show-error --location --output "$WP_CORE_ARCHIVE" "https://wordpress.org/wordpress-${WP_VERSION}.zip"
 printf '%s  %s\n' "$WP_CORE_SHA1" "$WP_CORE_ARCHIVE" | sha1sum --check --status
-unzip -t "$WP_CORE_ARCHIVE"
+unzip -tq "$WP_CORE_ARCHIVE"
 unzip -q "$WP_CORE_ARCHIVE" -d "$RUNNER_TEMP"
+mv "$RUNNER_TEMP/wordpress" "$WP_CORE_DIR"
 mkdir -p "$WP_CORE_DIR/wp-content/plugins" "$WP_CORE_DIR/wp-content/mu-plugins"
 unzip -q "$PACKAGE_ZIP" -d "$WP_CORE_DIR/wp-content/plugins"
 unzip -q "$ELEMENTOR_ZIP" -d "$WP_CORE_DIR/wp-content/plugins"
