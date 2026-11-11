@@ -349,7 +349,7 @@ try {
   });
   await withPage({ width: 1280, height: 900 }, async (page, responses) => {
     await openElementor(page, responses);
-    await inspectLoadedImage(page, '[data-id="jioibox1"] img', 'image/jpeg', responses, true, 'jpeg');
+    await inspectLoadedImage(page, '[data-id="jioibox1"] img', 'image/jpeg', responses, true, 'jpeg', 'elementor-jpeg');
     assert.equal(await page.locator('[data-id="jioibox1"] picture').count(), 0);
   });
   state = await control({ operation: 'reoptimize', asset: 'jpeg' });
@@ -365,7 +365,7 @@ try {
   await control({ operation: 'missing', asset: 'jpeg' });
   await withPage({ width: 1280, height: 900 }, async (page, responses) => {
     await openElementor(page, responses);
-    await inspectLoadedImage(page, '[data-id="jioibox1"] img', 'image/jpeg', responses, true, 'jpeg');
+    await inspectLoadedImage(page, '[data-id="jioibox1"] img', 'image/jpeg', responses, true, 'jpeg', 'elementor-jpeg');
   });
 
   // Rollback is an uncached HTTP request with the real setting OFF.
