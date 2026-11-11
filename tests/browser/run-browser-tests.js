@@ -53,7 +53,43 @@ function elementSelector(asset) {
   return `img.wp-image-${fixture.attachments[asset].id}`;
 }
 
-async function inspectLoadedImage(page, selector, expectedMime, responses, expectedOriginal = false, expectedAsset = null) {
+const preservedAttributes = ['src', 'srcset', 'sizes', 'width', 'height', 'alt', 'loading', 'decoding', 'fetchpriority', 'class', 'data-jio-browser-fixture'];
+const attributeBaselines = new Map();
+
+async function attributesFromHtml(page, html) {
+  return page.evaluate((markup) => {
+    const documentFromMarkup = new DOMParser().parseFromString(markup, 'text/html');
+    const image = documentFromMarkup.querySelector('img');
+    if (!image) return null;
+    return Object.fromEntries(Array.from(image.attributes, (attribute) => [attribute.name, attribute.value]));
+  }, html);
+}
+
+async function recordWordPressBaseline(page, asset) {
+  const response = await control({ operation: 'render', asset });
+  assert.ok(response.baseline_html.includes('<img'), 'WordPress pre-delivery HTML was captured.');
+  assert.ok(response.rendered_html.includes('<img'), 'Rendered image HTML was captured.');
+  const baseline = await attributesFromHtml(page, response.baseline_html);
+  assert.ok(baseline, 'WordPress baseline contains an image element.');
+  const previousBaseline = attributeBaselines.get(asset);
+  if (previousBaseline) {
+    for (const name of preservedAttributes) {
+      assert.equal(baseline[name] ?? null, previousBaseline[name] ?? null, `WordPress baseline ${name} remains stable across delivery settings (${asset}).`);
+    }
+  }
+  attributeBaselines.set(asset, baseline);
+  console.log(`WordPress pre-JIO HTML (${asset}, delivery ${response.frontend_delivery ? 'ON' : 'OFF'}): ${response.baseline_html}`);
+  console.log(`WordPress post-JIO HTML (${asset}, delivery ${response.frontend_delivery ? 'ON' : 'OFF'}): ${response.rendered_html}`);
+  const rendered = await attributesFromHtml(page, response.rendered_html);
+  if (rendered) {
+    for (const name of preservedAttributes) {
+      assert.equal(rendered[name] ?? null, baseline[name] ?? null, `JIO output preserves WordPress ${name} (${asset}).`);
+    }
+  }
+  return baseline;
+}
+
+async function inspectLoadedImage(page, selector, expectedMime, responses, expectedOriginal = false, expectedAsset = null, baselineKey = null) {
   const image = page.locator(selector).first();
   await image.waitFor({ state: 'attached' });
   await page.waitForFunction((query) => {
@@ -76,6 +112,8 @@ async function inspectLoadedImage(page, selector, expectedMime, responses, expec
     decoding: img.getAttribute('decoding'),
     fetchpriority: img.getAttribute('fetchpriority'),
     fixtureAttribute: img.getAttribute('data-jio-browser-fixture'),
+    classAttribute: img.getAttribute('class'),
+    attributes: Object.fromEntries(Array.from(img.attributes, (attribute) => [attribute.name, attribute.value])),
     responsiveWebp: img.closest('picture')?.querySelector('source[type="image/webp"]')?.srcset || '',
     responsiveSizes: img.closest('picture')?.querySelector('source[type="image/webp"]')?.sizes || '',
     hasPicture: Boolean(img.closest('picture')),
@@ -86,12 +124,14 @@ async function inspectLoadedImage(page, selector, expectedMime, responses, expec
   assert.ok(result.naturalWidth > 0 && result.naturalHeight > 0, 'The browser decoded a non-empty image.');
   assert.ok(result.width > 0 && result.height > 0, 'Intrinsic display dimensions are present.');
   assert.ok(result.alt.length > 0, 'Accessible alt text is preserved.');
-  assert.ok(result.fixtureAttribute, 'Custom WordPress image attributes are preserved.');
-  assert.equal(result.loading, 'lazy', 'Lazy loading is preserved.');
-  assert.equal(result.decoding, 'async', 'Async decoding is preserved.');
-  assert.equal(result.fetchpriority, 'low', 'Fetch priority is preserved.');
-  assert.equal(result.nestedPictures, 0, 'Delivery must never nest picture wrappers.');
   const asset = expectedAsset || (selector.includes('jioimg1') ? 'png' : selector.includes('jioibox1') ? 'jpeg' : selector.includes(String(fixture.attachments.jpeg.id)) ? 'jpeg' : 'png');
+  const baseline = attributeBaselines.get(baselineKey || asset);
+  if (baseline) {
+    for (const name of preservedAttributes) {
+      assert.equal(result.attributes?.[name] ?? null, baseline[name] ?? null, `WordPress ${name} behavior is preserved by JIO.`);
+    }
+  }
+  assert.equal(result.nestedPictures, 0, 'Delivery must never nest picture wrappers.');
   assert.equal(Number(result.widthAttribute), Number(fixture.attachments[asset].metadata.width), 'Original width attribute is preserved.');
   assert.equal(Number(result.heightAttribute), Number(fixture.attachments[asset].metadata.height), 'Original height attribute is preserved.');
   if (expectedOriginal) {
@@ -142,6 +182,8 @@ try {
   let state = await control({ operation: 'settings', enabled: 0, preference: 'auto' });
   assert.equal(state.frontend_delivery, false);
   await withPage({ width: 1280, height: 900 }, async (page, responses) => {
+    await recordWordPressBaseline(page, 'png');
+    await recordWordPressBaseline(page, 'jpeg');
     await openGutenberg(page);
     await inspectLoadedImage(page, elementSelector('png'), 'image/png', responses, true, 'png');
     await inspectLoadedImage(page, elementSelector('jpeg'), 'image/jpeg', responses, true, 'jpeg');
@@ -152,6 +194,20 @@ try {
   state = await control({ operation: 'settings', enabled: 1, preference: 'auto' });
   assert.equal(state.cache_notice, 'manual', 'A real setting update records the external-cache purge notice.');
   assert.equal(state.wp_rocket_available, false, 'WP Rocket is intentionally absent from this test installation.');
+  await withPage({ width: 1280, height: 900 }, async (page) => {
+    await recordWordPressBaseline(page, 'png');
+    await recordWordPressBaseline(page, 'jpeg');
+  });
+  await control({ operation: 'settings', enabled: 0, preference: 'auto' });
+  await withPage({ width: 1280, height: 900 }, async (page, responses) => {
+    await openElementor(page, responses);
+    const png = await inspectLoadedImage(page, '[data-id="jioimg1"] img', 'image/png', responses, true, 'png', 'elementor-png');
+    const jpeg = await inspectLoadedImage(page, '[data-id="jioibox1"] img', 'image/jpeg', responses, true, 'jpeg', 'elementor-jpeg');
+    attributeBaselines.set('elementor-png', png.attributes);
+    attributeBaselines.set('elementor-jpeg', jpeg.attributes);
+  });
+  state = await control({ operation: 'settings', enabled: 1, preference: 'auto' });
+  assert.equal(state.frontend_delivery, true);
   await withPage({ width: 1280, height: 900 }, async (page, responses) => {
     await openGutenberg(page);
     const png = await inspectLoadedImage(page, elementSelector('png'), 'image/avif', responses);
@@ -163,8 +219,8 @@ try {
 
   await withPage({ width: 1280, height: 900 }, async (page, responses) => {
     await openElementor(page, responses);
-    const imageWidget = await inspectLoadedImage(page, '[data-id="jioimg1"] img', 'image/avif', responses);
-    const imageBox = await inspectLoadedImage(page, '[data-id="jioibox1"] img', 'image/avif', responses);
+    const imageWidget = await inspectLoadedImage(page, '[data-id="jioimg1"] img', 'image/avif', responses, false, 'png', 'elementor-png');
+    const imageBox = await inspectLoadedImage(page, '[data-id="jioibox1"] img', 'image/avif', responses, false, 'jpeg', 'elementor-jpeg');
     assert.ok(imageWidget.currentSrc.endsWith('.jio.avif'));
     assert.ok(imageBox.currentSrc.endsWith('.jio.avif'));
     assert.equal(await page.locator('[data-id="jioimg1"] a').getAttribute('href'), `${baseUrl}/elementor-image-target/`);
@@ -233,7 +289,7 @@ try {
   assert.deepEqual(state.attachment_metadata, fixture.original_metadata.jpeg, 'JPEG attachment metadata survives legacy-row reoptimization.');
   await withPage({ width: 1280, height: 900 }, async (page, responses) => {
     await openElementor(page, responses);
-    await inspectLoadedImage(page, '[data-id="jioibox1"] img', 'image/avif', responses);
+    await inspectLoadedImage(page, '[data-id="jioibox1"] img', 'image/avif', responses, false, 'jpeg', 'elementor-jpeg');
   });
 
   // Remove only synthetic JPEG derivative files and rows; the original remains available.

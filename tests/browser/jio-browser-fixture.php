@@ -25,15 +25,31 @@ add_filter(
 		if ( ! $attachment instanceof WP_Post || ! in_array( (int) $attachment->ID, array_map( 'intval', (array) $ids ), true ) ) {
 			return $attributes;
 		}
-	$attributes['loading']                 = 'lazy';
-	$attributes['decoding']                = 'async';
-	$attributes['fetchpriority']            = 'low';
-	$attributes['data-jio-browser-fixture'] = 'synthetic';
-	return $attributes;
+		$attributes['loading']                  = 'lazy';
+		$attributes['fetchpriority']            = 'low';
+		$attributes['data-jio-browser-fixture'] = 'synthetic';
+		return $attributes;
 	},
 	10,
 	2
 );
+
+// Capture the exact WordPress-generated image HTML immediately before the JIO
+// delivery filter (priority 20) transforms it. The authenticated control
+// endpoint returns this only to the disposable browser test.
+add_filter(
+	'wp_get_attachment_image',
+	static function ( $html, $attachment_id ) {
+		$ids = get_option( 'jio_browser_attachments', array() );
+		if ( in_array( (int) $attachment_id, array_map( 'intval', (array) $ids ), true ) ) {
+			$GLOBALS['jio_browser_pre_delivery'][ (int) $attachment_id ] = $html;
+		}
+		return $html;
+	},
+	19,
+	2
+);
+$GLOBALS['jio_browser_pre_delivery'] = array();
 
 register_shutdown_function(
 	static function () {
@@ -157,6 +173,17 @@ add_action(
 		$record_ids    = array_map( static fn ( $record ) => (int) $record['id'], $records );
 		$identities    = array_map( static fn ( $record ) => (string) ( $record['derivative_identity'] ?? '' ), $records );
 		$original_hashes = get_option( 'jio_browser_original_hashes', array() );
+		$rendered_html   = '';
+		$baseline_html   = '';
+		if ( 'render' === $operation ) {
+			$attachment_id = isset( $ids[ $asset ] ) ? (int) $ids[ $asset ] : 0;
+			if ( $attachment_id < 1 ) {
+				status_header( 400 );
+				exit;
+			}
+			$rendered_html = wp_get_attachment_image( $attachment_id, 'full' );
+			$baseline_html = isset( $GLOBALS['jio_browser_pre_delivery'][ $attachment_id ] ) ? $GLOBALS['jio_browser_pre_delivery'][ $attachment_id ] : '';
+		}
 		header( 'Content-Type: application/json; charset=UTF-8' );
 		header( 'Cache-Control: no-store, no-cache, must-revalidate, max-age=0' );
 		echo wp_json_encode(
@@ -172,6 +199,8 @@ add_action(
 				'attachment_metadata'    => $attachment_id > 0 ? wp_get_attachment_metadata( $attachment_id ) : null,
 				'expected_original_sha256' => isset( $original_hashes[ $asset ] ) ? $original_hashes[ $asset ] : null,
 				'original_sha256'        => $attachment_id > 0 && is_file( get_attached_file( $attachment_id ) ) ? hash_file( 'sha256', get_attached_file( $attachment_id ) ) : null,
+				'baseline_html'          => $baseline_html,
+				'rendered_html'          => $rendered_html,
 			)
 		);
 		exit;
