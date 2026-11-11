@@ -526,6 +526,7 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 		$original_html = wp_get_attachment_image( $attachment_id, 'full', false, array( 'alt' => 'safe image', 'class' => 'example', 'loading' => 'lazy', 'decoding' => 'async' ) );
 		$this->assertFalse( Settings::sanitize( get_option( Plugin::OPTION_NAME ) )['frontend_delivery'] );
 		$this->assertStringNotContainsString( '<picture>', $original_html, 'default-off leaves WordPress markup untouched' );
+		$this->assertSame( 2, ( new MediaIntegration( $this->jobs, new QueueWorker( $this->jobs ) ) )->enqueue_attachment( $attachment_id ) );
 		$this->assertSame( 2, ( new QueueWorker( $this->jobs ) )->run_batch( 2 )['completed'] );
 		$source_hash = hash_file( 'sha256', $source );
 		$attached = get_post_meta( $attachment_id, '_wp_attached_file', true );
@@ -564,6 +565,7 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 	public function test_frontend_delivery_prefers_avif_then_webp_and_retains_srcset_and_fallback(): void {
 		$this->set_output_format( 'both' );
 		[ $attachment_id ] = $this->create_png_attachment( 'delivery-mixed', true );
+		$this->assertSame( 4, ( new MediaIntegration( $this->jobs, new QueueWorker( $this->jobs ) ) )->enqueue_attachment( $attachment_id ) );
 		$this->assertSame( 4, ( new QueueWorker( $this->jobs ) )->run_batch( 4 )['completed'] );
 		$settings = Settings::sanitize( get_option( Plugin::OPTION_NAME ) );
 		$settings['frontend_delivery'] = false;
