@@ -1,5 +1,5 @@
-const assert = require('node:assert/strict');
-const { chromium } = require('playwright');
+import assert from 'node:assert/strict';
+import { chromium } from 'playwright';
 
 const fixture = JSON.parse(process.env.JIO_BROWSER_FIXTURE || '{}');
 const baseUrl = process.env.JIO_BROWSER_BASE_URL || '';
@@ -150,6 +150,8 @@ try {
     const png = await inspectLoadedImage(page, elementSelector('png'), 'image/avif', responses);
     assert.ok(png.picture.indexOf('type="image/avif"') < png.picture.indexOf('type="image/webp"'), 'Auto mode orders AVIF before WebP.');
     await inspectLoadedImage(page, elementSelector('jpeg'), 'image/avif', responses);
+    assert.equal(await page.locator(`figure:has(${elementSelector('png')}) a`).getAttribute('href'), `${baseUrl}/jio-png-linked-target/`);
+    assert.match(await page.locator(`figure:has(${elementSelector('png')}) figcaption`).innerText(), /JIO browser caption/);
   });
 
   await withPage({ width: 1280, height: 900 }, async (page, responses) => {
@@ -190,6 +192,8 @@ try {
   });
   state = await control({ operation: 'reoptimize', asset: 'png' });
   assert.ok(state.derivative_identities.length > 0 && state.derivative_identities.every((identity) => identity.length > 0), 'Reoptimization restores a current identity after stale fallback.');
+  assert.equal(state.original_sha256, fixture.original_hashes.png, 'PNG source bytes survive stale-row reoptimization.');
+  assert.deepEqual(state.attachment_metadata, fixture.original_metadata.png, 'PNG attachment metadata survives stale-row reoptimization.');
 
   // Request a narrow viewport and ensure Chromium selects an appropriate responsive derivative.
   await withPage({ width: 360, height: 800 }, async (page, responses) => {
@@ -218,6 +222,8 @@ try {
   });
   state = await control({ operation: 'reoptimize', asset: 'jpeg' });
   assert.ok(state.derivative_identities.length > 0 && state.derivative_identities.every((identity) => identity.length > 0), 'Reoptimization writes current derivative identity metadata.');
+  assert.equal(state.original_sha256, fixture.original_hashes.jpeg, 'JPEG source bytes survive legacy-row reoptimization.');
+  assert.deepEqual(state.attachment_metadata, fixture.original_metadata.jpeg, 'JPEG attachment metadata survives legacy-row reoptimization.');
   await withPage({ width: 1280, height: 900 }, async (page, responses) => {
     await openElementor(page, responses);
     await inspectLoadedImage(page, '[data-id="jioibox1"] img', 'image/avif', responses);
