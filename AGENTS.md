@@ -30,14 +30,14 @@ For each development task:
 8. For confirmed CI failures, diagnose the failure, fix it without weakening tests or safety requirements, run available checks, commit the correction, and push again. Limit automated CI repair to three cycles; if CI still fails, stop and report the blocker.
 9. Report the final branch, commit SHA, CI run URL and result, and any checks or dependencies that could not be verified.
 
-This standing authorization applies only to this repository and the assigned task. It does not authorize merging or production deployment.
+This standing authorization applies only to this repository and the assigned task. It does not authorize merging without explicit approval. The repository owner has separately granted standing authorization, effective 2026-11-15, to deploy new versioned patch releases to production after all required GitHub Actions jobs pass and the installable release artifact is verified. This exception does not authorize deploying feature branches, failed or unverified builds, minor/major releases, or unrelated changes.
 
 Mandatory restrictions:
 
 - Never force-push, delete remote branches automatically, or rewrite published Git history.
 - Never commit secrets or credentials.
 - Never push directly to `main` or merge a pull request without explicit approval.
-- Never deploy to production.
+- Never deploy to production except for a new versioned patch release under the standing owner authorization above; deploy only the verified artifact after all required CI jobs pass.
 - Never discard unrelated local modifications.
 - Never create commits outside this assigned repository.
 - Preserve all existing security, image-processing, and testing requirements in this file.

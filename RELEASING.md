@@ -8,6 +8,7 @@ The root [`VERSION`](VERSION) file is the single authoritative release version. 
 - Minor: `0.6.0`
 - Major: `1.0.0`
 - Prerelease: `0.6.0-beta.1` (then `0.6.0-beta.2`, followed by `0.6.0`)
+- Patch prerelease: `0.6.1-beta.1` when a bug fix must ship while the current minor line remains in beta.
 
 WordPress reads the literal `Version` plugin-header field and compares it with `version_compare()`. Keep the header, `JIO_VERSION`, README title, and current versioned `CHANGELOG.md` heading synchronized with `VERSION`. Do not change the plugin slug or `jocky-image-optimizer/` directory.
 
@@ -27,6 +28,6 @@ WordPress reads the literal `Version` plugin-header field and compares it with `
    ```
 
 5. Push the feature branch and require every CI job to pass. CI derives its ZIP filename and uploaded artifact name from `VERSION`, installs the exact generated ZIP in disposable WordPress environments, and rejects inconsistent metadata.
-6. Review the artifact from the successful workflow. For an actual public release or merge to `main`, obtain the repository owner's authorization separately.
+6. Review the artifact from the successful workflow. A standing owner authorization dated 2026-11-15 permits production deployment of new patch releases after all CI jobs pass and the installable artifact is verified. Merging to `main` still requires explicit approval under `AGENTS.md`.
 
 The package helper rejects malformed SemVer and mismatches across the authoritative file, WordPress header, runtime constant, README title, changelog release heading, ZIP metadata, and archive filename. GitHub Actions uses the validated version output to name the artifact. There are no automatic update checks, remote update APIs, or deployment steps in this release process.
