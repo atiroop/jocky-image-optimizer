@@ -1,5 +1,9 @@
 # Validation
 
+## Production delivery permission incident (2026-11-15)
+
+Incognito browser inspection showed a broken Elementor image even though the generated `<picture>` markup referenced a registered WebP derivative. Read-only HTTP checks found the PNG source returned `200 image/png` while the derivative returned `403`; the derivative was mode `0600` owned by `jocky:jocky`, so Nginx could not read it. The logo derivative and five previously generated “Golden Moments…” WebP variants in the same uploads month directory were changed to mode `0644`; each then returned `200 image/webp`. No source image bytes were changed. The engine cause was that validated output inherited mode `0600` from its private temporary file through hard-link promotion. The 0.6.1-beta.1 candidate applies the configured WordPress file mode (0644 fallback) while output remains in its mode-0700 staging directory and adds a Linux real-encoder permission regression assertion. The code patch passed all six CI jobs in [run 43671907307](https://github.com/atiroop/jocky-image-optimizer/actions/runs/43671907307). Local WPCS, standalone tests, Composer validation/audit, PHP syntax, and package validation passed for the versioned candidate. Its installable ZIP is `jocky-image-optimizer-0.6.1-beta.1.zip`, SHA-256 `7F853AA6B11DF9BD8A9FA3DCF5C025FD31E7B3E7D094B1D3F530454EB5786AB5`. Local real-encoder tests could not run because `cjpeg` is unavailable; local PHP is 8.5 rather than the CI target 8.3, and no disposable WordPress/database runtime is installed. CI for the versioned candidate is pending. The plugin code fix has not been deployed; other older derivatives with mode `0600` may need a one-time permission repair or regeneration before public delivery.
+
 ## Milestone 6 final browser and Elementor acceptance
 
 The final focused browser run [42977047573](https://github.com/atiroop/jocky-image-optimizer/actions/runs/42977047573) on `feature/milestone-6-frontend-delivery` at `1e789b40ab9f9a0d53c93b6d13cc9f30a1c40fc8` passed all six jobs: static/unit, WordPress 6.6.11, WordPress 7.1.4, encoder integration, frontend browser integration, and beta package artifact.
@@ -19,7 +23,7 @@ The browser suite also passed legacy, missing, and stale derivative fallback, re
 | Browser / Elementor | Passed in CI | Run 42977047573 used disposable WordPress 7.1.4, Elementor 4.4.0, and Chromium. Local browser integration is unavailable. |
 | Production ZIP artifact | Passed and validated | Artifact `jocky-image-optimizer-0.6.0-beta.1`, ID `13836221448`, downloaded from [run 42977047573](https://github.com/atiroop/jocky-image-optimizer/actions/runs/42977047573/artifacts/13836221448). The installable ZIP is 112,785 bytes; SHA-256 `A4C964AF35DE9D1A1A81A5CA117AD5A6B51E7D6C6FBBEF6F311038E9FD6F6897`. `php scripts/validate-package.php` passed on the downloaded ZIP and confirmed its production dependencies and one-directory structure. |
 
-No production site, VPS, database, media, Elementor, WP Rocket, or Cloudflare configuration was accessed or modified.
+The statement above describes the cited Milestone 6 CI validation only. The later 2026-11-15 operational incident is recorded at the top of this document: it included a read-only VPS diagnosis, correction of the `jocky` cron entry and cron service restart, one bounded worker run for the explicitly queued job, and mode-only repairs to six JIO WebP derivatives. The worker updated its normal queue/derivative registry records; no manual database edits or changes to original media bytes, Elementor settings, WP Rocket settings, or Cloudflare configuration were made.
 
 ## Milestone 6 initial browser acceptance (historical failure)
 

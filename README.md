@@ -1,4 +1,4 @@
-# Jocky Image Optimizer 0.6.0-beta.1
+# Jocky Image Optimizer 0.6.1-beta.1
 
 Jocky Image Optimizer is a self-hosted WordPress plugin for local image optimization. It creates separately stored JPEG/PNG optimization and WebP/AVIF derivatives. Frontend delivery is disabled by default; when enabled, eligible derivatives are exposed with browser-native `<picture>` sources and the original WordPress `<img>` remains the fallback.
 
@@ -24,8 +24,8 @@ Image processing requires locally installed `jpegtran`, `djpeg` plus MozJPEG-com
 
 ## Install the beta from the WordPress Dashboard
 
-1. After the Milestone 6 GitHub Actions run succeeds, download the `jocky-image-optimizer-0.6.0-beta.1` artifact from that run. The artifact is not available until the run completes successfully.
-2. Extract the downloaded Actions artifact archive. It contains the installable `jocky-image-optimizer-0.6.0-beta.1.zip`.
+1. After the 0.6.1-beta.1 GitHub Actions run succeeds, download the `jocky-image-optimizer-0.6.1-beta.1` artifact from that run. The artifact is not available until the run completes successfully.
+2. Extract the downloaded Actions artifact archive. It contains the installable `jocky-image-optimizer-0.6.1-beta.1.zip`.
 3. In WordPress, open **Plugins → Add New Plugin → Upload Plugin**, select that inner plugin ZIP, and click **Install Now**.
 4. Click **Activate Plugin** after installation completes.
 5. Open **Image Optimizer** to review encoder availability and queue progress. Open **Image Optimizer → Settings** to choose output formats and other settings.

@@ -99,8 +99,8 @@ $assert   = static function ( bool $condition, string $message ) use ( &$failure
 require_once dirname( __DIR__ ) . '/scripts/package-version.php';
 $repository_root = dirname( __DIR__ );
 $release_version = jio_package_version( $repository_root );
-$assert( '0.6.0-beta.1' === $release_version, 'authoritative VERSION matches plugin, README, and changelog metadata' );
-$assert( version_compare( $release_version, '0.4.0-beta', '>' ), 'native version comparison recognizes the new plugin as newer than the installed beta' );
+$assert( '0.6.1-beta.1' === $release_version, 'authoritative VERSION matches plugin, README, and changelog metadata' );
+$assert( version_compare( $release_version, '0.6.0-beta.1', '>' ), 'native version comparison recognizes the patch beta as newer than the installed beta' );
 $assert( version_compare( '0.6.0-beta.1', '0.6.0-beta.2', '<' ) && version_compare( '0.6.0-beta.2', '0.6.0', '<' ), 'native version comparison orders beta prereleases below later prereleases and stable release' );
 $metadata_fixture = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'jio-version-fixture-' . bin2hex( random_bytes( 8 ) );
 mkdir( $metadata_fixture, 0700 );

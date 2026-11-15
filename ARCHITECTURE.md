@@ -25,7 +25,7 @@ The application has no third-party PHP runtime dependencies. Composer provides P
 
 ## Safety boundaries
 
-The explicit engine API writes only a separate destination beneath configured roots. Staging uses a private mode-0700 temporary directory; after validation, the engine promotes the file with same-filesystem hard-link creation that does not replace an existing path. Filesystems without hard links fail closed. This assumes the configured managed roots and their parent directories are trusted and not writable by hostile local users; PHP has no portable openat-style directory-handle API to eliminate all path replacement races. Activation preserves existing settings.
+The explicit engine API writes only a separate destination beneath configured roots. Staging uses a private mode-0700 temporary directory and mode-0600 file; after validation, the engine applies the WordPress file mode (or 0644 fallback) while the file is still inside that private directory, then promotes it with same-filesystem hard-link creation that does not replace an existing path. This makes public uploads readable by the web server without exposing the staging file. Filesystems without hard links fail closed. This assumes the configured managed roots and their parent directories are trusted and not writable by hostile local users; PHP has no portable openat-style directory-handle API to eliminate all path replacement races. Activation preserves existing settings.
 
 ## Milestone 4 queue and media flow
 
