@@ -9,7 +9,7 @@ declare(strict_types=1);
 
 namespace Jocky\ImageOptimizer\Optimization;
 
-// phpcs:disable WordPress.WP.AlternativeFunctions.unlink_unlink, WordPress.WP.AlternativeFunctions.file_system_operations_rmdir -- WP_Filesystem has no atomic hard-link/no-replace promotion primitive; these native same-volume operations fail closed and roll back exact paths.
+// phpcs:disable WordPress.WP.AlternativeFunctions.unlink_unlink, WordPress.WP.AlternativeFunctions.file_system_operations_rmdir, WordPress.WP.AlternativeFunctions.file_system_operations_chmod -- Native same-volume hard links provide no-clobber promotion; chmod makes validated public uploads web-readable while their parent staging directory remains private.
 
 /** Promotes a same-filesystem temporary file without replacing existing data. */
 final class SafeFileReplacer {
@@ -31,6 +31,10 @@ final class SafeFileReplacer {
 		$dest_stat      = false === $dest_directory ? false : stat( $dest_directory );
 		if ( false === $temp_directory || false === $dest_directory || false === $temp_stat || false === $dest_stat || $temp_stat['dev'] !== $dest_stat['dev'] || is_link( dirname( $temporary_path ) ) || realpath( $temporary_path ) === realpath( $source_path ) ) {
 			throw new OptimizationException( 'commit_precondition_failed', 'The temporary file is not safely colocated with the destination.' );
+		}
+		$public_file_mode = defined( 'FS_CHMOD_FILE' ) ? (int) FS_CHMOD_FILE : 0644;
+		if ( ! chmod( $temporary_path, $public_file_mode ) ) {
+			throw new OptimizationException( 'output_permissions_failed', 'The validated output could not be made readable by the web server.' );
 		}
 		if ( ! link( $temporary_path, $destination_path ) ) {
 			throw new OptimizationException( 'atomic_commit_unsupported', 'This filesystem cannot atomically create the output without replacing an existing path.' );
