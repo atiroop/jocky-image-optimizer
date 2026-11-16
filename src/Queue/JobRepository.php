@@ -144,19 +144,35 @@ final class JobRepository {
 		$wpdb->query( $wpdb->prepare( 'UPDATE ' . QueueSchema::slots_table() . ' SET lock_token = NULL, locked_at = NULL WHERE lock_token = %s', $token ) );
 	}
 
+	/** Whether a non-expired worker slot or job lease is currently active. */
+	public function has_active_worker(): bool {
+		global $wpdb;
+		$slots = QueueSchema::slots_table();
+		$jobs  = QueueSchema::jobs_table();
+		return 1 === (int) $wpdb->get_var( $wpdb->prepare( "SELECT 1 FROM {$slots} WHERE slot_id > 0 AND lock_token IS NOT NULL AND locked_at >= DATE_SUB(UTC_TIMESTAMP(), INTERVAL %d SECOND) LIMIT 1", self::STALE_SECONDS ) )
+			|| 1 === (int) $wpdb->get_var( $wpdb->prepare( "SELECT 1 FROM {$jobs} WHERE status = 'running' AND locked_at >= DATE_SUB(UTC_TIMESTAMP(), INTERVAL %d SECOND) LIMIT 1", self::STALE_SECONDS ) );
+	}
+
 	/** Atomically claims one ready job with a conditional InnoDB update and worker token.
 	 *
-	 * @param string $token Ownership token.
+	 * @param string              $token Ownership token.
+	 * @param array<int,int>|null $attachment_ids Optional attachment claim scope.
 	 * @return array<string, mixed>|null Claimed job.
 	 */
-	public function claim_next( string $token ): ?array {
+	public function claim_next( string $token, ?array $attachment_ids = null ): ?array {
 		global $wpdb;
+		if ( array() === $attachment_ids ) {
+			return null;
+		}
 		$db      = $this->connection ?? $wpdb;
 		$table   = QueueSchema::jobs_table();
+		$scope   = null === $attachment_ids ? '' : ' AND attachment_id IN (' . implode( ',', array_fill( 0, count( $attachment_ids ), '%d' ) ) . ')';
+		$args    = array_merge( array( $token ), null === $attachment_ids ? array() : array_map( 'intval', $attachment_ids ) );
 		$updated = $db->query(
+			// phpcs:ignore WordPress.DB.PreparedSQLPlaceholders.ReplacementsWrongNumber -- Placeholder count is built from the validated attachment scope above.
 			$db->prepare(
-				"UPDATE {$table} SET status = 'running', attempts = attempts + 1, lock_token = %s, locked_at = UTC_TIMESTAMP(), started_at = UTC_TIMESTAMP(), updated_at = UTC_TIMESTAMP(), error_code = NULL WHERE status = 'pending' AND available_at <= UTC_TIMESTAMP() ORDER BY id ASC LIMIT 1",
-				$token
+				"UPDATE {$table} SET status = 'running', attempts = attempts + 1, lock_token = %s, locked_at = UTC_TIMESTAMP(), started_at = UTC_TIMESTAMP(), updated_at = UTC_TIMESTAMP(), error_code = NULL WHERE status = 'pending' AND available_at <= UTC_TIMESTAMP(){$scope} ORDER BY id ASC LIMIT 1",
+				$args
 			)
 		);
 		if ( 1 !== $updated ) {
@@ -169,22 +185,32 @@ final class JobRepository {
 	/** Returns stale running jobs to the queue only after acquiring their shared attachment lock.
 	 *
 	 * A live optimizer holds the same lock, so an expired timestamp alone cannot transfer ownership.
+	 *
+	 * @param array<int,int>|null $attachment_ids Optional claim scope.
+	 * @return array<int,array{job_id:int,attachment_id:int,status:string,error_code:string}> Recovered jobs.
 	 */
-	public function recover_stale(): void {
+	public function recover_stale( ?array $attachment_ids = null ): array {
 		global $wpdb;
+		if ( array() === $attachment_ids ) {
+			return array();
+		}
 		$table = QueueSchema::jobs_table();
+		$scope = null === $attachment_ids ? '' : ' AND attachment_id IN (' . implode( ',', array_fill( 0, count( $attachment_ids ), '%d' ) ) . ')';
+		$args  = array_merge( array( self::STALE_SECONDS ), null === $attachment_ids ? array() : array_map( 'intval', $attachment_ids ), array( self::MAX_BATCH ) );
 		$stale = (array) $wpdb->get_results(
-			$wpdb->prepare( "SELECT id,attachment_id FROM {$table} WHERE status = 'running' AND locked_at < DATE_SUB(UTC_TIMESTAMP(), INTERVAL %d SECOND) ORDER BY id ASC LIMIT %d", self::STALE_SECONDS, self::MAX_BATCH ),
+			// phpcs:ignore WordPress.DB.PreparedSQLPlaceholders.ReplacementsWrongNumber -- Placeholder count is built from the validated attachment scope above.
+			$wpdb->prepare( "SELECT id,attachment_id,attempts FROM {$table} WHERE status = 'running' AND locked_at < DATE_SUB(UTC_TIMESTAMP(), INTERVAL %d SECOND){$scope} ORDER BY id ASC LIMIT %d", $args ),
 			ARRAY_A
 		);
-		$locks = new AttachmentOperationLock();
+		$locks     = new AttachmentOperationLock();
+		$recovered = array();
 		foreach ( $stale as $job ) {
 			$attachment_id = (int) $job['attachment_id'];
 			if ( ! $locks->acquire( $attachment_id ) ) {
 				continue;
 			}
 			try {
-				$wpdb->query(
+				$changed = $wpdb->query(
 					$wpdb->prepare(
 						"UPDATE {$table} SET status = IF(attempts >= %d,'failed','pending'), available_at = UTC_TIMESTAMP(), finished_at = IF(attempts >= %d,UTC_TIMESTAMP(),NULL), lock_token = NULL, locked_at = NULL, error_code = 'stale_worker_recovered', updated_at = UTC_TIMESTAMP() WHERE id = %d AND status = 'running' AND locked_at < DATE_SUB(UTC_TIMESTAMP(), INTERVAL %d SECOND)",
 						self::MAX_ATTEMPTS,
@@ -193,10 +219,19 @@ final class JobRepository {
 						self::STALE_SECONDS
 					)
 				);
+				if ( 1 === $changed ) {
+					$recovered[] = array(
+						'job_id'        => (int) $job['id'],
+						'attachment_id' => $attachment_id,
+						'status'        => (int) $job['attempts'] >= self::MAX_ATTEMPTS ? 'failed' : 'pending',
+						'error_code'    => 'stale_worker_recovered',
+					);
+				}
 			} finally {
 				$locks->release( $attachment_id );
 			}
 		}
+		return $recovered;
 	}
 
 	/** Marks a job completed or skipped only when its worker still owns it.
@@ -304,6 +339,22 @@ final class JobRepository {
 	public function pending_count(): int {
 		global $wpdb;
 		return (int) $wpdb->get_var( 'SELECT COUNT(*) FROM ' . QueueSchema::jobs_table() . " WHERE status = 'pending'" );
+	}
+
+	/** Counts only currently claimable pending jobs in an attachment scope.
+	 *
+	 * @param array<int,int> $attachment_ids Attachment identifiers.
+	 * @return int Number of eligible scoped jobs.
+	 */
+	public function eligible_pending_count( array $attachment_ids ): int {
+		global $wpdb;
+		if ( array() === $attachment_ids ) {
+			return 0;
+		}
+		$placeholders = implode( ',', array_fill( 0, count( $attachment_ids ), '%d' ) );
+		$args         = array_map( 'intval', $attachment_ids );
+		// phpcs:ignore WordPress.DB.PreparedSQLPlaceholders.UnfinishedPrepare -- Placeholder count is built from the validated attachment scope above.
+		return (int) $wpdb->get_var( $wpdb->prepare( 'SELECT COUNT(*) FROM ' . QueueSchema::jobs_table() . " WHERE status = 'pending' AND available_at <= UTC_TIMESTAMP() AND attachment_id IN ({$placeholders})", $args ) );
 	}
 
 	/** Returns bounded retry scheduling delay in seconds.

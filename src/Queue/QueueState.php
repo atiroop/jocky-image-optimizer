@@ -27,5 +27,6 @@ final class QueueState {
 	/** Resumes queued work. */
 	public static function resume(): void {
 		update_option( self::PAUSED_OPTION, '0', false );
+		do_action( 'jio_queue_resumed' );
 	}
 }

@@ -11,6 +11,7 @@ use Jocky\ImageOptimizer\Media\MediaIntegration;
 use Jocky\ImageOptimizer\Queue\AttachmentJobFactory;
 use Jocky\ImageOptimizer\Queue\BulkScanner;
 use Jocky\ImageOptimizer\Queue\JobRepository;
+use Jocky\ImageOptimizer\Queue\QueueMaintenanceWindow;
 use Jocky\ImageOptimizer\Queue\QueueSchema;
 use Jocky\ImageOptimizer\Queue\QueueState;
 use Jocky\ImageOptimizer\Queue\QueueWorker;
@@ -43,6 +44,7 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 			deactivate_plugins( self::PLUGIN );
 		}
 		delete_option( Plugin::OPTION_NAME );
+		delete_option( QueueMaintenanceWindow::OPTION_NAME );
 
 		$activation = activate_plugin( self::PLUGIN, '', false, true );
 		$this->assertNotWPError( $activation );
@@ -100,6 +102,7 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 		QueueState::resume();
 		deactivate_plugins( self::PLUGIN );
 		delete_option( Plugin::OPTION_NAME );
+		delete_option( QueueMaintenanceWindow::OPTION_NAME );
 		wp_set_current_user( 0 );
 		parent::tearDown();
 	}
@@ -253,10 +256,10 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 		$this->assertSame( self::$media_fixture_hash, hash_file( 'sha256', self::$media_fixture ) );
 	}
 
-	public function test_beta_zip_activation_initializes_queue_schema_and_safe_defaults(): void {
+	public function test_release_zip_activation_initializes_queue_schema_and_safe_defaults(): void {
 		global $wpdb;
 		$plugin_data = get_plugin_data( JIO_FILE, false, false );
-		$this->assertSame( '0.6.2', JIO_VERSION );
+		$this->assertSame( '0.6.3', JIO_VERSION );
 		$this->assertSame( JIO_VERSION, $plugin_data['Version'], 'WordPress reads the uploaded plugin header version' );
 		$this->assertTrue( version_compare( $plugin_data['Version'], '0.6.0-beta.1', '>' ), 'WordPress native version comparison recognizes the patch beta as newer than the installed beta' );
 		$this->assertTrue( version_compare( '0.6.1-beta.1', '0.6.1-beta.2', '<' ), 'WordPress native comparison orders patch prerelease identifiers' );
@@ -283,6 +286,60 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 		$this->assertSame( 'pending', $state['outcome'] );
 		$this->assertFalse( $state['terminal'] );
 		$this->assertNotEmpty( $state['revision'] );
+	}
+
+	public function test_attachment_readiness_reports_only_durable_completed_skipped_and_failed_states(): void {
+		$this->set_output_format( 'original' );
+		$expected_outcomes = array( 'completed', 'skipped', 'failed' );
+		foreach ( $expected_outcomes as $expected_outcome ) {
+			[ $attachment_id ] = $this->create_png_attachment( 'readiness-' . $expected_outcome, false );
+			$candidates        = ( new AttachmentJobFactory() )->jobs_for_attachment( $attachment_id );
+			$this->assertSame( 1, $this->jobs->enqueue_many( $candidates ) );
+			$before = AttachmentReadiness::state( $attachment_id );
+			$this->assertSame( 'pending', $before['outcome'] );
+			$this->assertFalse( $before['terminal'] );
+			$token = bin2hex( random_bytes( 16 ) );
+			$job   = $this->jobs->claim_next( $token, array( $attachment_id ) );
+			$this->assertIsArray( $job );
+			if ( 'failed' === $expected_outcome ) {
+				global $wpdb;
+				$wpdb->query( $wpdb->prepare( 'UPDATE ' . QueueSchema::jobs_table() . ' SET attempts = %d WHERE id = %d', JobRepository::MAX_ATTEMPTS, (int) $job['id'] ) );
+				$this->assertTrue( $this->jobs->fail( (int) $job['id'], $token, 'test_failure' ) );
+			} else {
+				$this->assertTrue( $this->jobs->finish( (int) $job['id'], $token, $expected_outcome, 1, 1 ) );
+			}
+			$after = AttachmentReadiness::state( $attachment_id );
+			$this->assertSame( $expected_outcome, $after['outcome'] );
+			$this->assertTrue( $after['terminal'] );
+			$this->assertSame( $before['generation'], $after['generation'] );
+			$this->assertNotSame( $before['revision'], $after['revision'] );
+		}
+	}
+
+	public function test_real_worker_publishes_genuine_terminal_skipped_readiness_for_ineligible_source(): void {
+		$this->set_output_format( 'original' );
+		[ $attachment_id ] = $this->create_png_attachment( 'real-skipped-readiness', false );
+		$candidates        = ( new AttachmentJobFactory() )->jobs_for_attachment( $attachment_id );
+		$this->assertSame( 1, $this->jobs->enqueue_many( $candidates ) );
+		$this->assertSame( 'pending', AttachmentReadiness::state( $attachment_id )['outcome'] );
+
+		// Simulate an offloaded/filtered source after enqueue. The worker must
+		// persist skipped and derive readiness from real queue state; no source
+		// file or readiness metadata is edited.
+		$filter = static function ( string $file, int $filtered_attachment_id ) use ( $attachment_id ): string {
+			return $attachment_id === $filtered_attachment_id ? $file . '.unavailable-test-path' : $file;
+		};
+		add_filter( 'get_attached_file', $filter, 10, 2 );
+		try {
+			$counts = $this->run_scoped_batch( 1, array( $attachment_id ) );
+			$state  = AttachmentReadiness::state( $attachment_id );
+		} finally {
+			remove_filter( 'get_attached_file', $filter, 10 );
+		}
+		$this->assertSame( 1, $counts['skipped'] );
+		$this->assertSame( 'skipped', $this->job_status( (int) $this->job_row_for_attachment( $attachment_id )['id'] ) );
+		$this->assertSame( 'skipped', $state['outcome'] );
+		$this->assertTrue( $state['terminal'] );
 	}
 
 	public function test_media_row_action_and_queue_controls_require_administrator_capability(): void {
@@ -312,6 +369,7 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 		[ $attachment_id, $source ] = $this->create_png_attachment( 'admin-request-safety', false );
 		$this->assertSame( 1, $this->jobs->enqueue_many( ( new AttachmentJobFactory() )->jobs_for_attachment( $attachment_id ) ) );
 		$this->assertSame( 1, ( new QueueWorker( $this->jobs ) )->run_batch( 1 )['completed'] );
+		$this->assertSame( 'completed', AttachmentReadiness::state( $attachment_id )['outcome'], 'the actual worker publishes completed readiness from its persisted result' );
 		$derivative = $this->derivative_path( $attachment_id, 'full' );
 		$this->assertFileExists( $derivative );
 		$derivative_hash = hash_file( 'sha256', $derivative );
@@ -965,6 +1023,204 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 		$this->assertSame( 0, $this->jobs->pending_count() );
 	}
 
+	public function test_worker_boot_repairs_a_missing_event_and_resume_restores_scheduling_idempotently(): void {
+		$this->set_output_format( 'webp' );
+		[ $attachment_id ] = $this->create_png_attachment( 'orphaned-queue', false );
+		$this->assertGreaterThan( 0, $this->jobs->enqueue_many( ( new AttachmentJobFactory() )->jobs_for_attachment( $attachment_id ) ) );
+		wp_clear_scheduled_hook( QueueWorker::CRON_HOOK );
+		( new Plugin() )->boot();
+		$this->assertNotFalse( wp_next_scheduled( QueueWorker::CRON_HOOK ), 'boot schedules work left pending after its event was lost' );
+		$worker = new QueueWorker( $this->jobs );
+		$worker->register();
+		$this->assertSame( 1, $this->scheduled_worker_event_count(), 'repeated boot reconciliation leaves exactly one event' );
+		QueueState::pause();
+		wp_clear_scheduled_hook( QueueWorker::CRON_HOOK );
+		$worker->register();
+		$this->assertFalse( wp_next_scheduled( QueueWorker::CRON_HOOK ), 'a paused queue is never rescheduled during boot' );
+		QueueState::resume();
+		$this->assertNotFalse( wp_next_scheduled( QueueWorker::CRON_HOOK ), 'resume restores an immediate worker opportunity' );
+		$this->assertSame( 1, $this->scheduled_worker_event_count(), 'resume remains idempotent' );
+	}
+
+	public function test_worker_does_not_schedule_when_queue_is_empty(): void {
+		wp_clear_scheduled_hook( QueueWorker::CRON_HOOK );
+		( new QueueWorker( $this->jobs ) )->register();
+		$this->assertFalse( wp_next_scheduled( QueueWorker::CRON_HOOK ) );
+	}
+
+	public function test_scoped_worker_claims_only_selected_interleaved_attachment_jobs(): void {
+		$this->set_output_format( 'webp' );
+		[ $unselected_id ] = $this->create_png_attachment( 'scope-unselected', false );
+		[ $selected_id ]   = $this->create_png_attachment( 'scope-selected', false );
+		$factory            = new AttachmentJobFactory();
+		$unselected_jobs    = $factory->jobs_for_attachment( $unselected_id );
+		$selected_jobs      = $factory->jobs_for_attachment( $selected_id );
+		$interleaved        = array();
+		$expected_job_order = array();
+		for ( $index = 0; $index < max( count( $unselected_jobs ), count( $selected_jobs ) ); ++$index ) {
+			foreach ( array( $unselected_jobs, $selected_jobs ) as $jobs ) {
+				if ( isset( $jobs[ $index ] ) ) {
+					$interleaved[]        = $jobs[ $index ];
+					$expected_job_order[] = $jobs[ $index ]['attachment_id'];
+				}
+			}
+		}
+		$this->assertGreaterThan( 0, $this->jobs->enqueue_many( $interleaved ) );
+		global $wpdb;
+		$this->assertSame( $expected_job_order, array_map( 'intval', (array) $wpdb->get_col( 'SELECT attachment_id FROM ' . QueueSchema::jobs_table() . ' ORDER BY id ASC' ) ) );
+		$unselected_job = $this->job_row_for_attachment( $unselected_id );
+		$selected_job   = $this->job_row_for_attachment( $selected_id );
+		$this->assertLessThan( (int) $selected_job['id'], (int) $unselected_job['id'], 'fixture jobs are interleaved by global queue order' );
+
+		$counts = $this->run_scoped_batch( 1, array( $selected_id ) );
+		$this->assertSame( 1, $counts['claimed'] );
+		$this->assertSame( (int) $selected_job['id'], $counts['jobs'][0]['job_id'] );
+		$this->assertSame( $selected_id, $counts['jobs'][0]['attachment_id'] );
+		$this->assertSame( 'pending', $this->job_status( (int) $unselected_job['id'] ) );
+		$this->assertContains( $this->job_status( (int) $selected_job['id'] ), array( 'completed', 'skipped' ) );
+	}
+
+	public function test_global_cron_is_held_during_scoped_maintenance_and_resumes_afterward(): void {
+		$this->set_output_format( 'webp' );
+		[ $first_selected_id ]  = $this->create_png_attachment( 'maintenance-selected-first', false );
+		[ $unrelated_id ]       = $this->create_png_attachment( 'maintenance-unrelated-job-20', false );
+		[ $second_selected_id ] = $this->create_png_attachment( 'maintenance-selected-second', false );
+		$factory                = new AttachmentJobFactory();
+		$this->jobs->enqueue_many(
+			array_merge(
+				$factory->jobs_for_attachment( $first_selected_id ),
+				$factory->jobs_for_attachment( $unrelated_id ),
+				$factory->jobs_for_attachment( $second_selected_id )
+			)
+		);
+		$unrelated_job = $this->job_row_for_attachment( $unrelated_id );
+		$this->assertSame( 3, $this->jobs->pending_count(), 'test setup has exactly three eligible interleaved jobs' );
+		$worker = new QueueWorker( $this->jobs );
+		$scope  = array( $first_selected_id, $second_selected_id );
+		$window = QueueMaintenanceWindow::begin( $scope, $this->jobs );
+		$this->assertIsString( $window );
+		try {
+			$this->assertTrue( QueueMaintenanceWindow::is_active() );
+			$worker->run_scheduled();
+			$this->assertSame( 'pending', $this->job_status( (int) $unrelated_job['id'] ), 'a due global cron tick cannot claim the unrelated job during maintenance' );
+			$this->assertSame( 3, $this->jobs->pending_count() );
+
+			$counts = $worker->run_batch( 2, $scope, $window );
+			$this->assertSame( 2, $counts['claimed'] );
+			$this->assertSame( array( $first_selected_id, $second_selected_id ), array_column( $counts['jobs'], 'attachment_id' ) );
+			$this->assertSame( 'pending', $this->job_status( (int) $unrelated_job['id'] ), 'job 20 equivalent and every other unselected row remain untouched' );
+			foreach ( $scope as $attachment_id ) {
+				$this->assertContains( $this->job_status( (int) $this->job_row_for_attachment( $attachment_id )['id'] ), array( 'completed', 'skipped' ) );
+			}
+		} finally {
+			QueueMaintenanceWindow::release( $window );
+		}
+
+		$this->assertFalse( QueueMaintenanceWindow::is_active() );
+		$worker->schedule_next();
+		$this->assertNotFalse( wp_next_scheduled( QueueWorker::CRON_HOOK ), 'normal queue scheduling is restored after scoped maintenance' );
+		$worker->run_scheduled();
+		$this->assertContains( $this->job_status( (int) $unrelated_job['id'] ), array( 'completed', 'skipped' ), 'global processing resumes only after the scoped window ends' );
+	}
+
+	public function test_scoped_maintenance_refuses_an_active_worker_and_respects_pause(): void {
+		[ $attachment_id ] = $this->create_png_attachment( 'maintenance-active-guard', false );
+		$this->jobs->enqueue_many( ( new AttachmentJobFactory() )->jobs_for_attachment( $attachment_id ) );
+		$token = bin2hex( random_bytes( 16 ) );
+		$this->assertTrue( $this->jobs->acquire_slot( $token, 1 ) );
+		$window = QueueMaintenanceWindow::begin( array( $attachment_id ), $this->jobs );
+		$this->assertWPError( $window );
+		$this->assertSame( 'worker_active', $window->get_error_code() );
+		$this->assertFalse( QueueMaintenanceWindow::is_active() );
+		$this->assertSame( 'pending', $this->job_status( (int) $this->job_row_for_attachment( $attachment_id )['id'] ) );
+		$this->jobs->release_slot( $token );
+
+		QueueState::pause();
+		$paused = QueueMaintenanceWindow::begin( array( $attachment_id ), $this->jobs );
+		$this->assertWPError( $paused );
+		$this->assertSame( 'queue_paused', $paused->get_error_code() );
+		$this->assertSame( 'pending', $this->job_status( (int) $this->job_row_for_attachment( $attachment_id )['id'] ) );
+	}
+
+	public function test_expired_scoped_maintenance_lease_recovers_without_changing_jobs(): void {
+		[ $attachment_id ] = $this->create_png_attachment( 'maintenance-expiry', false );
+		$this->jobs->enqueue_many( ( new AttachmentJobFactory() )->jobs_for_attachment( $attachment_id ) );
+		update_option(
+			QueueMaintenanceWindow::OPTION_NAME,
+			array( 'token' => 'expired-test-token', 'attachment_ids' => array( $attachment_id ), 'expires_at' => time() - 1 ),
+			false
+		);
+		$this->assertFalse( QueueMaintenanceWindow::is_active() );
+		$window = QueueMaintenanceWindow::begin( array( $attachment_id ), $this->jobs );
+		$this->assertIsString( $window, 'an expired lease is safely replaced by a new scoped invocation' );
+		$this->assertTrue( QueueMaintenanceWindow::owns( $window, array( $attachment_id ) ) );
+		$this->assertSame( 'pending', $this->job_status( (int) $this->job_row_for_attachment( $attachment_id )['id'] ) );
+		QueueMaintenanceWindow::release( $window );
+		update_option(
+			QueueMaintenanceWindow::OPTION_NAME,
+			array( 'token' => 'interrupted-test-token', 'attachment_ids' => array( $attachment_id ), 'expires_at' => time() - 1 ),
+			false
+		);
+		$counts = ( new QueueWorker( $this->jobs ) )->run_batch( 1 );
+		$this->assertSame( 1, $counts['claimed'], 'global queue work resumes automatically after an interrupted window expires' );
+		$this->assertFalse( QueueMaintenanceWindow::is_active() );
+	}
+
+	public function test_scoped_stale_recovery_does_not_touch_unselected_attachments(): void {
+		$this->set_output_format( 'webp' );
+		[ $unselected_id ] = $this->create_png_attachment( 'scope-stale-other', false );
+		[ $selected_id ]   = $this->create_png_attachment( 'scope-stale-selected', false );
+		$factory           = new AttachmentJobFactory();
+		$this->jobs->enqueue_many( $factory->jobs_for_attachment( $unselected_id ) );
+		$this->jobs->enqueue_many( $factory->jobs_for_attachment( $selected_id ) );
+		$unselected_job = $this->job_row_for_attachment( $unselected_id );
+		global $wpdb;
+		$table = QueueSchema::jobs_table();
+		$wpdb->query( $wpdb->prepare( "UPDATE {$table} SET status = 'running', attempts = 1, locked_at = DATE_SUB(UTC_TIMESTAMP(), INTERVAL 601 SECOND) WHERE id = %d", (int) $unselected_job['id'] ) );
+		$window = QueueMaintenanceWindow::begin( array( $selected_id ), $this->jobs );
+		$this->assertIsString( $window );
+		try {
+			$this->jobs->recover_stale( array( $selected_id ) );
+		} finally {
+			QueueMaintenanceWindow::release( $window );
+		}
+		$this->assertSame( 'running', $this->job_status( (int) $unselected_job['id'] ) );
+	}
+
+	public function test_scoped_worker_with_no_eligible_jobs_does_not_claim_or_lease_unrelated_work(): void {
+		$this->set_output_format( 'webp' );
+		[ $other_id ]    = $this->create_png_attachment( 'scope-no-work-other', false );
+		[ $selected_id ] = $this->create_png_attachment( 'scope-no-work-selected', false );
+		$this->jobs->enqueue_many( ( new AttachmentJobFactory() )->jobs_for_attachment( $other_id ) );
+		$other_job = $this->job_row_for_attachment( $other_id );
+		global $wpdb;
+		$slots_before = $wpdb->get_results( 'SELECT slot_id,lock_token,locked_at FROM ' . QueueSchema::slots_table() . ' ORDER BY slot_id', ARRAY_A );
+		$counts       = $this->run_scoped_batch( 3, array( $selected_id ) );
+		$slots_after  = $wpdb->get_results( 'SELECT slot_id,lock_token,locked_at FROM ' . QueueSchema::slots_table() . ' ORDER BY slot_id', ARRAY_A );
+		$this->assertSame( 0, $counts['claimed'] );
+		$this->assertSame( array(), $counts['jobs'] );
+		$this->assertSame( 'pending', $this->job_status( (int) $other_job['id'] ) );
+		$this->assertSame( $slots_before, $slots_after, 'an empty scoped invocation does not acquire a global worker slot' );
+	}
+
+	public function test_scoped_worker_stops_after_a_stale_job_exhausts_its_retry_limit(): void {
+		$this->set_output_format( 'webp' );
+		[ $attachment_id ] = $this->create_png_attachment( 'scope-stale-failed', true );
+		$candidates        = ( new AttachmentJobFactory() )->jobs_for_attachment( $attachment_id );
+		$this->assertSame( 2, $this->jobs->enqueue_many( $candidates ) );
+		global $wpdb;
+		$table = QueueSchema::jobs_table();
+		$rows  = $wpdb->get_results( $wpdb->prepare( "SELECT id FROM {$table} WHERE attachment_id = %d ORDER BY id", $attachment_id ), ARRAY_A );
+		$wpdb->query( $wpdb->prepare( "UPDATE {$table} SET status = 'running', attempts = %d, lock_token = %s, locked_at = DATE_SUB(UTC_TIMESTAMP(), INTERVAL 601 SECOND) WHERE id = %d", JobRepository::MAX_ATTEMPTS, 'expired-test-lease', (int) $rows[0]['id'] ) );
+
+		$counts = $this->run_scoped_batch( 10, array( $attachment_id ) );
+		$this->assertSame( 0, $counts['claimed'] );
+		$this->assertSame( 1, $counts['failed'] );
+		$this->assertSame( array( 'job_id' => (int) $rows[0]['id'], 'attachment_id' => $attachment_id, 'status' => 'failed', 'error_code' => 'stale_worker_recovered' ), $counts['jobs'][0] );
+		$this->assertSame( 'failed', $this->job_status( (int) $rows[0]['id'] ) );
+		$this->assertSame( 'pending', $this->job_status( (int) $rows[1]['id'] ), 'the scoped worker stops without claiming later work after a terminal failure' );
+	}
+
 	public function test_concurrent_claims_are_distinct_and_require_their_own_worker_tokens(): void {
 		$this->set_output_format( 'webp' );
 		[ $first_id ]  = $this->create_png_attachment( 'claim-one', false );
@@ -1160,6 +1416,40 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 		$this->assertNotSame( $target['relative_path'], $relative );
 		$this->assertMatchesRegularExpression( '/\.jio-[a-f0-9]{16}\.png\z/', $relative );
 		$this->assertFileExists( $source );
+	}
+
+	/** Counts scheduled worker events across all timestamps. */
+	private function scheduled_worker_event_count(): int {
+		$count = 0;
+		foreach ( (array) _get_cron_array() as $hooks ) {
+			$count += isset( $hooks[ QueueWorker::CRON_HOOK ] ) ? count( $hooks[ QueueWorker::CRON_HOOK ] ) : 0;
+		}
+		return $count;
+	}
+
+	/** Runs a scoped batch through the same expiring exclusion used by WP-CLI. */
+	private function run_scoped_batch( int $batch_size, array $attachment_ids ): array {
+		$window = QueueMaintenanceWindow::begin( $attachment_ids, $this->jobs );
+		$this->assertIsString( $window );
+		try {
+			return ( new QueueWorker( $this->jobs ) )->run_batch( $batch_size, $attachment_ids, $window );
+		} finally {
+			QueueMaintenanceWindow::release( $window );
+		}
+	}
+
+	/** Reads the first persisted job row for an attachment. */
+	private function job_row_for_attachment( int $attachment_id ): array {
+		global $wpdb;
+		$row = $wpdb->get_row( $wpdb->prepare( 'SELECT id,attachment_id,status FROM ' . QueueSchema::jobs_table() . ' WHERE attachment_id = %d ORDER BY id ASC LIMIT 1', $attachment_id ), ARRAY_A );
+		$this->assertIsArray( $row );
+		return $row;
+	}
+
+	/** Reads one persisted queue status. */
+	private function job_status( int $job_id ): string {
+		global $wpdb;
+		return (string) $wpdb->get_var( $wpdb->prepare( 'SELECT status FROM ' . QueueSchema::jobs_table() . ' WHERE id = %d', $job_id ) );
 	}
 
 	/** Returns the expected generation-specific derivative for an attachment variant. */
