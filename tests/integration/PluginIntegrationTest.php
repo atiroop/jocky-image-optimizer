@@ -74,7 +74,11 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 			wp_delete_attachment( $attachment_id, true );
 		}
 		foreach ( $this->test_media_directories as $directory ) {
-			foreach ( glob( trailingslashit( $directory ) . '*.jio.*' ) ?: array() as $derivative ) {
+			$derivatives = array_merge(
+				glob( trailingslashit( $directory ) . '*.jio.*' ) ?: array(),
+				glob( trailingslashit( $directory ) . '*.jio-*.*' ) ?: array()
+			);
+			foreach ( array_unique( $derivatives ) as $derivative ) {
 				if ( is_file( $derivative ) && ! is_link( $derivative ) ) {
 					unlink( $derivative );
 				}
