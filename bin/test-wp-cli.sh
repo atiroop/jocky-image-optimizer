@@ -169,7 +169,8 @@ grep -q 'removed 0 derivatives' <<< "$repeat"
 # Verify attachment-scoped CLI claims choose the requested later job and leave
 # the earlier global queue row untouched. Then verify the global worker still runs.
 scope_other_id="$(wp_cli media import "$fixture" --porcelain)"
-export JIO_SCOPE_OTHER_ID="$scope_other_id" JIO_SCOPE_SELECTED_ID="$attachment_id"
+scope_selected_id="$(wp_cli media import "$fixture" --porcelain)"
+export JIO_SCOPE_OTHER_ID="$scope_other_id" JIO_SCOPE_SELECTED_ID="$scope_selected_id"
 wp_cli eval '$settings = get_option("jio_settings", array()); $settings["output_format"] = "webp"; update_option("jio_settings", $settings); $factory = new \Jocky\ImageOptimizer\Queue\AttachmentJobFactory(); foreach (array((int) getenv("JIO_SCOPE_OTHER_ID"), (int) getenv("JIO_SCOPE_SELECTED_ID")) as $id) { (new \Jocky\ImageOptimizer\Queue\JobRepository())->enqueue_many($factory->jobs_for_attachment($id)); }'
 wp_cli eval 'wp_clear_scheduled_hook("jio_process_queue");'
 if wp_cli jio worker run --attachment-ids=0 --batch-size=1; then
@@ -191,17 +192,13 @@ if grep -q "\"attachment_id\":$JIO_SCOPE_OTHER_ID" <<< "$scoped_output"; then
 	echo 'Scoped worker returned a result for an unselected attachment.' >&2
 	exit 1
 fi
-scope_states="$(wp_cli eval 'global $wpdb; $table = \Jocky\ImageOptimizer\Queue\QueueSchema::jobs_table(); $other = (int) getenv("JIO_SCOPE_OTHER_ID"); $selected = (int) getenv("JIO_SCOPE_SELECTED_ID"); echo wp_json_encode(array("other" => $wpdb->get_col($wpdb->prepare("SELECT status FROM {$table} WHERE attachment_id = %d ORDER BY id", $other)), "selected" => $wpdb->get_col($wpdb->prepare("SELECT status FROM {$table} WHERE attachment_id = %d ORDER BY id", $selected))));')"
-printf '%s\n' "$scope_states"
-grep -q '"other":\["pending"\]' <<< "$scope_states"
-grep -Eq '"selected":\[("completed"|"skipped")\]' <<< "$scope_states"
+wp_cli eval 'global $wpdb; $table = \Jocky\ImageOptimizer\Queue\QueueSchema::jobs_table(); $other = (int) getenv("JIO_SCOPE_OTHER_ID"); $selected = (int) getenv("JIO_SCOPE_SELECTED_ID"); $other_statuses = $wpdb->get_col($wpdb->prepare("SELECT status FROM {$table} WHERE attachment_id = %d ORDER BY id", $other)); $selected_statuses = $wpdb->get_col($wpdb->prepare("SELECT status FROM {$table} WHERE attachment_id = %d ORDER BY id", $selected)); $terminal = array_filter($selected_statuses, static fn (string $status): bool => in_array($status, array("completed", "skipped"), true)); if (array_filter($other_statuses, static fn (string $status): bool => "pending" !== $status) || 1 !== count($terminal)) { WP_CLI::error("Scoped claim changed an unrelated job or processed more than one selected job."); } echo "Scoped claim verified: one selected job processed; unrelated jobs remain pending.\\n";'
 scoped_cron="$(wp_cli eval 'echo wp_next_scheduled("jio_process_queue") ? "SCHEDULED" : "NO_EVENT";')"
 [[ "$scoped_cron" == 'NO_EVENT' ]]
 global_output="$(wp_cli jio worker run --batch-size=1)"
 printf '%s\n' "$global_output"
 grep -q 'Claimed 1;' <<< "$global_output"
-scope_states="$(wp_cli eval 'global $wpdb; $table = \Jocky\ImageOptimizer\Queue\QueueSchema::jobs_table(); echo wp_json_encode($wpdb->get_col($wpdb->prepare("SELECT status FROM {$table} WHERE attachment_id = %d ORDER BY id", (int) getenv("JIO_SCOPE_OTHER_ID"))));')"
-grep -Eq '^\["(completed|skipped)"\]$' <<< "$scope_states"
+wp_cli eval 'global $wpdb; $table = \Jocky\ImageOptimizer\Queue\QueueSchema::jobs_table(); $other = (int) getenv("JIO_SCOPE_OTHER_ID"); $selected = (int) getenv("JIO_SCOPE_SELECTED_ID"); $other_statuses = $wpdb->get_col($wpdb->prepare("SELECT status FROM {$table} WHERE attachment_id = %d ORDER BY id", $other)); $selected_statuses = $wpdb->get_col($wpdb->prepare("SELECT status FROM {$table} WHERE attachment_id = %d ORDER BY id", $selected)); $other_terminal = array_filter($other_statuses, static fn (string $status): bool => in_array($status, array("completed", "skipped"), true)); $selected_terminal = array_filter($selected_statuses, static fn (string $status): bool => in_array($status, array("completed", "skipped"), true)); if (1 !== count($other_terminal) || 1 !== count($selected_terminal)) { WP_CLI::error("Global claim did not process exactly one remaining unrelated job."); } echo "Global claim compatibility verified.\\n";'
 
 wp_debug_output="$(wp_cli eval 'echo defined("WP_DEBUG") ? "WP_DEBUG_DEFINED\n" : "WP_DEBUG_MISSING\n";' 2>&1)"
 if grep -q 'Constant WP_DEBUG already defined' <<< "$wp_debug_output"; then
