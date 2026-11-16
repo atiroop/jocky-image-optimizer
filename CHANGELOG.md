@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.2 — Versioned completion and URL resolution contracts
+
+- Publish a versioned attachment optimization state with current expected/completed variants, generation, terminal outcome, and registry revision.
+- Emit a terminal action only after durable queue transitions; publish the URL resolver filter for JMO to map JIO-selected picture sources without wrapping markup.
+- Preserve existing delivery markup and local fallback behavior.
+
 ## 0.6.1-beta.1 — Derivative delivery permission fix
 
 - Make validated optimized derivatives readable by the web server using the configured WordPress file mode (0644 fallback), while temporary output remains private until atomic promotion.

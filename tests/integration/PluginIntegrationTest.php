@@ -17,6 +17,7 @@ use Jocky\ImageOptimizer\Recovery\AttachmentOperationLock;
 use Jocky\ImageOptimizer\Recovery\RecoveryService;
 use Jocky\ImageOptimizer\Recovery\RecoveryWorker;
 use Jocky\ImageOptimizer\Plugin;
+use Jocky\ImageOptimizer\Integration\AttachmentReadiness;
 use Jocky\ImageOptimizer\Settings;
 
 /** Tests the packaged plugin in the real WordPress test runtime. */
@@ -250,7 +251,7 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 	public function test_beta_zip_activation_initializes_queue_schema_and_safe_defaults(): void {
 		global $wpdb;
 		$plugin_data = get_plugin_data( JIO_FILE, false, false );
-		$this->assertSame( '0.6.1-beta.1', JIO_VERSION );
+		$this->assertSame( '0.6.2', JIO_VERSION );
 		$this->assertSame( JIO_VERSION, $plugin_data['Version'], 'WordPress reads the uploaded plugin header version' );
 		$this->assertTrue( version_compare( $plugin_data['Version'], '0.6.0-beta.1', '>' ), 'WordPress native version comparison recognizes the patch beta as newer than the installed beta' );
 		$this->assertTrue( version_compare( '0.6.1-beta.1', '0.6.1-beta.2', '<' ), 'WordPress native comparison orders patch prerelease identifiers' );
@@ -263,6 +264,20 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 		$this->assertSame( QueueSchema::jobs_table(), $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', QueueSchema::jobs_table() ) ) );
 		$this->assertSame( QueueSchema::slots_table(), $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', QueueSchema::slots_table() ) ) );
 		$this->assertSame( array( 0, 1, 2, 3, 4 ), array_map( 'intval', (array) $wpdb->get_col( 'SELECT slot_id FROM ' . QueueSchema::slots_table() . ' ORDER BY slot_id ASC' ) ) );
+	}
+
+	public function test_attachment_readiness_contract_is_versioned_and_pending_until_every_expected_job_is_terminal(): void {
+		[ $attachment_id ] = $this->create_png_attachment( 'readiness-pending', false );
+		$this->set_output_format( 'both' );
+		$state = AttachmentReadiness::state( $attachment_id );
+		$this->assertSame( 1, $state['contract_version'] );
+		$this->assertSame( $attachment_id, $state['attachment_id'] );
+		$this->assertNotEmpty( $state['generation'] );
+		$this->assertNotEmpty( $state['expected'] );
+		$this->assertSame( array(), $state['completed'] );
+		$this->assertSame( 'pending', $state['outcome'] );
+		$this->assertFalse( $state['terminal'] );
+		$this->assertNotEmpty( $state['revision'] );
 	}
 
 	public function test_media_row_action_and_queue_controls_require_administrator_capability(): void {

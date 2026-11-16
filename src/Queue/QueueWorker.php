@@ -12,6 +12,7 @@ namespace Jocky\ImageOptimizer\Queue;
 use Jocky\ImageOptimizer\Media\AttachmentProcessor;
 use Jocky\ImageOptimizer\Plugin;
 use Jocky\ImageOptimizer\Settings;
+use Jocky\ImageOptimizer\Integration\AttachmentReadiness;
 
 /** Claims and runs no more than a caller-selected bounded number of jobs. */
 final class QueueWorker {
@@ -89,10 +90,16 @@ final class QueueWorker {
 					);
 				}
 				if ( 'failed' === $result['status'] ) {
-					$this->jobs->fail( (int) $job['id'], $token, (string) $result['error_code'] );
+					$failed = $this->jobs->fail( (int) $job['id'], $token, (string) $result['error_code'] );
+					if ( $failed ) {
+						AttachmentReadiness::publish_if_terminal( (int) $job['attachment_id'] );
+					}
 					++$counts['failed'];
 				} else {
-					$this->jobs->finish( (int) $job['id'], $token, $result['status'], $result['input_bytes'], $result['output_bytes'], $result['error_code'] );
+					$finished = $this->jobs->finish( (int) $job['id'], $token, $result['status'], $result['input_bytes'], $result['output_bytes'], $result['error_code'] );
+					if ( $finished ) {
+						AttachmentReadiness::publish_if_terminal( (int) $job['attachment_id'] );
+					}
 					++$counts[ 'completed' === $result['status'] ? 'completed' : 'skipped' ];
 				}
 			}

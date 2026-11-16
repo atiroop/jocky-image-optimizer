@@ -1,8 +1,14 @@
-# Jocky Image Optimizer 0.6.1-beta.1
+# Jocky Image Optimizer 0.6.2
 
 Jocky Image Optimizer is a self-hosted WordPress plugin for local image optimization. It creates separately stored JPEG/PNG optimization and WebP/AVIF derivatives. Frontend delivery is disabled by default; when enabled, eligible derivatives are exposed with browser-native `<picture>` sources and the original WordPress `<img>` remains the fallback.
 
 The `VERSION` file is the authoritative release version. Packaging and CI reject mismatches in the plugin header, runtime constant, this title, changelog release heading, ZIP metadata, filename, or artifact name. The beta ZIP is built and tested by GitHub Actions on PHP 8.3 with WordPress 6.6.11 and 7.1.4. See [VALIDATION.md](VALIDATION.md) for current validation evidence and limitations.
+
+## Attachment completion contract
+
+JIO 0.6.2 exposes `Jocky\ImageOptimizer\Integration\AttachmentReadiness::state( $attachment_id )`. The state includes contract version, attachment ID, a generation digest for the current expected variant/format set, expected and completed keys, terminal outcome (`pending`, `running`, `completed`, `partial`, `failed`, `skipped`, or `invalidated`), a registry revision digest, and a terminal flag. Source changes that leave only old fingerprint rows are reported as invalidated; expected new work remains pending/running. `jio_attachment_optimization_terminal_v1` is emitted only after a durable job transition and the aggregate expected set is terminal. Consumers must make duplicate notifications idempotent. JIO's existing per-derivative update action is not an attachment completion signal.
+
+The additive `jio_delivery_resource_url_v1` filter receives the URL selected by JIO, attachment ID, variant key, MIME type, and current generation. It must return the same local URL when no safe remote mapping exists. It changes resource URLs only; JIO remains the sole owner of `<picture>` and responsive-format selection.
 
 ## Recovery and derivative lifecycle
 
@@ -24,8 +30,8 @@ Image processing requires locally installed `jpegtran`, `djpeg` plus MozJPEG-com
 
 ## Install the beta from the WordPress Dashboard
 
-1. After the 0.6.1-beta.1 GitHub Actions run succeeds, download the `jocky-image-optimizer-0.6.1-beta.1` artifact from that run. The artifact is not available until the run completes successfully.
-2. Extract the downloaded Actions artifact archive. It contains the installable `jocky-image-optimizer-0.6.1-beta.1.zip`.
+1. After the 0.6.2 GitHub Actions run succeeds, download the `jocky-image-optimizer-0.6.2` artifact from that run. The artifact is not available until the run completes successfully.
+2. Extract the downloaded Actions artifact archive. It contains the installable `jocky-image-optimizer-0.6.2.zip`.
 3. In WordPress, open **Plugins → Add New Plugin → Upload Plugin**, select that inner plugin ZIP, and click **Install Now**.
 4. Click **Activate Plugin** after installation completes.
 5. Open **Image Optimizer** to review encoder availability and queue progress. Open **Image Optimizer → Settings** to choose output formats and other settings.
