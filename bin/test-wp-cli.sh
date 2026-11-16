@@ -194,7 +194,7 @@ if grep -q "\"attachment_id\":$JIO_SCOPE_OTHER_ID" <<< "$scoped_output"; then
 fi
 wp_cli eval 'global $wpdb; $table = \Jocky\ImageOptimizer\Queue\QueueSchema::jobs_table(); $other = (int) getenv("JIO_SCOPE_OTHER_ID"); $selected = (int) getenv("JIO_SCOPE_SELECTED_ID"); $other_statuses = $wpdb->get_col($wpdb->prepare("SELECT status FROM {$table} WHERE attachment_id = %d ORDER BY id", $other)); $selected_statuses = $wpdb->get_col($wpdb->prepare("SELECT status FROM {$table} WHERE attachment_id = %d ORDER BY id", $selected)); $terminal = array_filter($selected_statuses, static fn (string $status): bool => in_array($status, array("completed", "skipped"), true)); if (array_filter($other_statuses, static fn (string $status): bool => "pending" !== $status) || 1 !== count($terminal)) { WP_CLI::error("Scoped claim changed an unrelated job or processed more than one selected job."); } echo "Scoped claim verified: one selected job processed; unrelated jobs remain pending.\\n";'
 scoped_cron="$(wp_cli eval 'echo wp_next_scheduled("jio_process_queue") ? "SCHEDULED" : "NO_EVENT";')"
-[[ "$scoped_cron" == 'NO_EVENT' ]]
+[[ "$scoped_cron" == 'SCHEDULED' ]]
 global_output="$(wp_cli jio worker run --batch-size=1)"
 printf '%s\n' "$global_output"
 grep -q 'Claimed 1;' <<< "$global_output"

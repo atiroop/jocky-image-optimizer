@@ -10,6 +10,7 @@ declare(strict_types=1);
 namespace Jocky\ImageOptimizer\Cli;
 
 use Jocky\ImageOptimizer\Queue\JobRepository;
+use Jocky\ImageOptimizer\Queue\QueueMaintenanceWindow;
 use Jocky\ImageOptimizer\Queue\QueueState;
 use Jocky\ImageOptimizer\Queue\QueueWorker;
 
@@ -31,12 +32,17 @@ final class WorkerCommand extends \WP_CLI_Command {
 	 * : Maximum jobs to attempt, from 1 to 10. Defaults to 1.
 	 *
 	 * [--attachment-ids=<ids>]
-	 * : Optional comma-separated positive attachment IDs. Claims are scoped in the database.
+	 * : Optional comma-separated positive attachment IDs. Creates a short expiring maintenance window that blocks global workers.
 	 *
 	 * ## EXAMPLES
 	 *
 	 *     wp jio worker run --batch-size=5
 	 *     wp jio worker run --attachment-ids=76,80 --batch-size=8
+	 *
+	 * Scoped runs create a 15-minute expiring maintenance lease. The lease
+	 * blocks global cron work, is renewed during the bounded run, refuses to
+	 * start while a worker is active, and restores normal scheduling on exit.
+	 * Queue pause remains authoritative and cannot be bypassed.
 	 *
 	 * @param array<int, string>    $args       Positional arguments.
 	 * @param array<string, string> $assoc_args Named arguments.
@@ -66,10 +72,25 @@ final class WorkerCommand extends \WP_CLI_Command {
 			}
 			$attachment_ids = array_map( 'intval', $parts );
 		}
-		$counts = $this->worker->run_batch( $batch_size, $attachment_ids );
 		if ( null === $attachment_ids ) {
+			if ( QueueMaintenanceWindow::is_active() ) {
+				\WP_CLI::warning( 'A scoped maintenance window is active; the global worker did not run.' );
+				return;
+			}
+			$counts = $this->worker->run_batch( $batch_size );
 			$this->worker->schedule_next();
 		} else {
+			$maintenance_token = QueueMaintenanceWindow::begin( $attachment_ids, $this->jobs );
+			if ( is_wp_error( $maintenance_token ) ) {
+				\WP_CLI::error( $maintenance_token->get_error_message() );
+			}
+			\WP_CLI::line( 'Scoped maintenance window active; global workers are held until this bounded run exits.' );
+			try {
+				$counts = $this->worker->run_batch( $batch_size, $attachment_ids, $maintenance_token );
+			} finally {
+				QueueMaintenanceWindow::release( $maintenance_token );
+				$this->worker->schedule_next();
+			}
 			\WP_CLI::line( wp_json_encode( array( 'jobs' => $counts['jobs'] ), JSON_UNESCAPED_SLASHES ) );
 		}
 		if ( $counts['failed'] > 0 ) {
@@ -92,8 +113,9 @@ final class WorkerCommand extends \WP_CLI_Command {
 		\WP_CLI::line(
 			wp_json_encode(
 				array(
-					'paused' => QueueState::is_paused(),
-					'queue'  => $stats,
+					'paused'             => QueueState::is_paused(),
+					'scoped_maintenance' => QueueMaintenanceWindow::is_active(),
+					'queue'              => $stats,
 				),
 				JSON_PRETTY_PRINT
 			)

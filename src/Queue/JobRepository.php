@@ -144,6 +144,15 @@ final class JobRepository {
 		$wpdb->query( $wpdb->prepare( 'UPDATE ' . QueueSchema::slots_table() . ' SET lock_token = NULL, locked_at = NULL WHERE lock_token = %s', $token ) );
 	}
 
+	/** Whether a non-expired worker slot or job lease is currently active. */
+	public function has_active_worker(): bool {
+		global $wpdb;
+		$slots = QueueSchema::slots_table();
+		$jobs  = QueueSchema::jobs_table();
+		return 1 === (int) $wpdb->get_var( $wpdb->prepare( "SELECT 1 FROM {$slots} WHERE slot_id > 0 AND lock_token IS NOT NULL AND locked_at >= DATE_SUB(UTC_TIMESTAMP(), INTERVAL %d SECOND) LIMIT 1", self::STALE_SECONDS ) )
+			|| 1 === (int) $wpdb->get_var( $wpdb->prepare( "SELECT 1 FROM {$jobs} WHERE status = 'running' AND locked_at >= DATE_SUB(UTC_TIMESTAMP(), INTERVAL %d SECOND) LIMIT 1", self::STALE_SECONDS ) );
+	}
+
 	/** Atomically claims one ready job with a conditional InnoDB update and worker token.
 	 *
 	 * @param string              $token Ownership token.

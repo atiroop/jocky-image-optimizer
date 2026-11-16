@@ -56,9 +56,10 @@ final class QueueWorker {
 	 *
 	 * @param int                 $batch_size Maximum number of jobs for this invocation.
 	 * @param array<int,int>|null $attachment_ids Optional attachment claim scope.
+	 * @param string|null         $maintenance_token Token for the active scoped maintenance lease.
 	 * @return array{claimed:int,completed:int,failed:int,skipped:int,jobs:array<int,array{job_id:int,attachment_id:int,status:string,error_code:?string}>} Outcome counts and sanitized job outcomes.
 	 */
-	public function run_batch( int $batch_size = 1, ?array $attachment_ids = null ): array {
+	public function run_batch( int $batch_size = 1, ?array $attachment_ids = null, ?string $maintenance_token = null ): array {
 		$counts = array(
 			'claimed'   => 0,
 			'completed' => 0,
@@ -69,23 +70,10 @@ final class QueueWorker {
 		if ( QueueState::is_paused() ) {
 			return $counts;
 		}
-		$recovered = $this->jobs->recover_stale( $attachment_ids );
-		foreach ( $recovered as $outcome ) {
-			if ( 'failed' === $outcome['status'] ) {
-				AttachmentReadiness::publish_if_terminal( $outcome['attachment_id'] );
-				++$counts['failed'];
-			}
-			$counts['jobs'][] = array(
-				'job_id'        => $outcome['job_id'],
-				'attachment_id' => $outcome['attachment_id'],
-				'status'        => $outcome['status'],
-				'error_code'    => $outcome['error_code'],
-			);
-		}
-		if ( null !== $attachment_ids && $counts['failed'] > 0 ) {
+		if ( null === $attachment_ids && QueueMaintenanceWindow::is_active() ) {
 			return $counts;
 		}
-		if ( null !== $attachment_ids && 0 === $this->jobs->eligible_pending_count( $attachment_ids ) ) {
+		if ( null !== $attachment_ids && ( null === $maintenance_token || ! QueueMaintenanceWindow::owns( $maintenance_token, $attachment_ids ) ) ) {
 			return $counts;
 		}
 		$settings   = Settings::sanitize( get_option( Plugin::OPTION_NAME, array() ) );
@@ -95,8 +83,38 @@ final class QueueWorker {
 			return $counts;
 		}
 		try {
+			// Recheck after taking a worker slot. Maintenance acquisition checks
+			// active slots, so either the worker owns a slot first or the window
+			// wins and this invocation exits before stale recovery or claiming.
+			if ( QueueState::is_paused()
+				|| ( null === $attachment_ids && QueueMaintenanceWindow::is_active() )
+				|| ( null !== $attachment_ids && ( null === $maintenance_token || ! QueueMaintenanceWindow::owns( $maintenance_token, $attachment_ids ) ) ) ) {
+				return $counts;
+			}
+			$recovered = $this->jobs->recover_stale( $attachment_ids );
+			foreach ( $recovered as $outcome ) {
+				if ( 'failed' === $outcome['status'] ) {
+					AttachmentReadiness::publish_if_terminal( $outcome['attachment_id'] );
+					++$counts['failed'];
+				}
+				$counts['jobs'][] = array(
+					'job_id'        => $outcome['job_id'],
+					'attachment_id' => $outcome['attachment_id'],
+					'status'        => $outcome['status'],
+					'error_code'    => $outcome['error_code'],
+				);
+			}
+			if ( null !== $attachment_ids && ( $counts['failed'] > 0 || 0 === $this->jobs->eligible_pending_count( $attachment_ids ) ) ) {
+				return $counts;
+			}
 			for ( $index = 0; $index < $batch_size; ++$index ) {
 				if ( QueueState::is_paused() || ! $this->jobs->renew_slot( $token ) ) {
+					break;
+				}
+				if ( null !== $attachment_ids && ( null === $maintenance_token || ! QueueMaintenanceWindow::renew( $maintenance_token, $attachment_ids ) ) ) {
+					break;
+				}
+				if ( null === $attachment_ids && QueueMaintenanceWindow::is_active() ) {
 					break;
 				}
 				$job = $this->jobs->claim_next( $token, $attachment_ids );
@@ -158,7 +176,7 @@ final class QueueWorker {
 
 	/** Schedules a future bounded tick when pending jobs exist. */
 	public function schedule_next(): void {
-		if ( QueueState::is_paused() || false !== wp_next_scheduled( self::CRON_HOOK ) ) {
+		if ( QueueState::is_paused() || QueueMaintenanceWindow::is_active() || false !== wp_next_scheduled( self::CRON_HOOK ) ) {
 			return;
 		}
 		$delay = $this->jobs->next_pending_delay();
@@ -169,7 +187,7 @@ final class QueueWorker {
 
 	/** Brings the next queue tick forward after newly ready work is inserted. */
 	public function schedule_immediate(): void {
-		if ( QueueState::is_paused() || 0 === $this->jobs->pending_count() ) {
+		if ( QueueState::is_paused() || QueueMaintenanceWindow::is_active() || 0 === $this->jobs->pending_count() ) {
 			return;
 		}
 		wp_clear_scheduled_hook( self::CRON_HOOK );

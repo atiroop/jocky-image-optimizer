@@ -5,6 +5,7 @@
 - Fix the false-versus-null `wp_next_scheduled()` check that prevented `schedule_next()` from creating an event when none existed. Reconcile missing events during normal WordPress boot, while avoiding unrelated scheduling side effects during WP-CLI attachment-scoped runs; pause and empty queues remain idle, and repeated registration is idempotent.
 - Resume now restores one immediate worker opportunity through the existing scheduling hook.
 - Add `wp jio worker run --attachment-ids=<ids>` with strict input validation, SQL-scoped claims and stale-lease recovery, bounded batch execution, and sanitized per-job results; stop after the first scoped failure.
+- Scoped CLI runs now acquire a short, expiring attachment scope that blocks global cron claims, refuses to overlap an active worker, renews through the bounded run, and restores normal scheduling on exit. An expired lease self-recovers after an interrupted CLI process; queue pause remains authoritative.
 - Preserve the global worker behavior and existing queue schema.
 - Add regressions for orphaned pending queues, pause/resume scheduling, interleaved attachment claims, scoped stale recovery, and terminal readiness lifecycle.
 
