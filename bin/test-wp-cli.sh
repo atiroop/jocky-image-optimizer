@@ -61,7 +61,7 @@ attachment_id="$(wp_cli media import "$fixture" --porcelain)"
 [[ "$attachment_id" =~ ^[0-9]+$ ]]
 export JIO_CLI_ATTACHMENT_ID="$attachment_id"
 source_path="$(wp_cli eval 'echo get_attached_file((int) getenv("JIO_CLI_ATTACHMENT_ID"));')"
-derivative_path="${source_path%.*}.jio.webp"
+derivative_path="$(wp_cli eval '$target = ( new \Jocky\ImageOptimizer\Media\AttachmentTargetProvider() )->target( (int) getenv( "JIO_CLI_ATTACHMENT_ID" ), "full" ); echo trailingslashit( wp_upload_dir()["basedir"] ) . str_replace( "/", DIRECTORY_SEPARATOR, \Jocky\ImageOptimizer\Media\DerivativePath::for_target( $target, "image/webp" ) );')"
 cwebp "$source_path" -quiet -o "$derivative_path"
 
 record_script="$RUNNER_TEMP/jio-cli-register-fixture.php"
@@ -77,7 +77,7 @@ if ( ! is_array( $target ) ) {
 $uploads = wp_upload_dir();
 $root = realpath( $uploads['basedir'] );
 $relative = ltrim( str_replace( DIRECTORY_SEPARATOR, '/', substr( $target['source_path'], strlen( $root ) ) ), '/' );
-$derivative = dirname( $target['source_path'] ) . DIRECTORY_SEPARATOR . pathinfo( $target['source_path'], PATHINFO_FILENAME ) . '.jio.webp';
+$derivative = trailingslashit( $uploads['basedir'] ) . str_replace( '/', DIRECTORY_SEPARATOR, \Jocky\ImageOptimizer\Media\DerivativePath::for_target( $target, 'image/webp' ) );
 $derivative_relative = ltrim( str_replace( DIRECTORY_SEPARATOR, '/', substr( $derivative, strlen( $root ) ) ), '/' );
 $source_hash = hash_file( 'sha256', $target['source_path'] );
 $derivative_hash = hash_file( 'sha256', $derivative );

@@ -66,7 +66,8 @@ if ( '1' !== (string) $secondary->get_var( $secondary->prepare( 'SELECT GET_LOCK
 $blocked_cleanup = ( new \Jocky\ImageOptimizer\Recovery\RecoveryService() )->cleanup_attachment( $attachment_id, true );
 $secondary->get_var( $secondary->prepare( 'SELECT RELEASE_LOCK(%s)', $cleanup_lock_name ) );
 $source     = get_attached_file( $attachment_id );
-$derivative = dirname( $source ) . DIRECTORY_SEPARATOR . pathinfo( $source, PATHINFO_FILENAME ) . '.jio.webp';
+$target     = ( new \Jocky\ImageOptimizer\Media\AttachmentTargetProvider() )->target( $attachment_id, 'full' );
+$derivative = trailingslashit( wp_upload_dir()['basedir'] ) . str_replace( '/', DIRECTORY_SEPARATOR, \Jocky\ImageOptimizer\Media\DerivativePath::for_target( $target, 'image/webp' ) );
 if ( 'operation_locked' !== $blocked_cleanup['status'] || ! is_file( $source ) || ! is_file( $derivative ) ) {
 	fwrite( STDERR, "A second cleanup did not fail closed while the attachment lock was held.\n" );
 	exit( 1 );

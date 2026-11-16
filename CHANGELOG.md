@@ -107,7 +107,7 @@
 
 - Added versioned prefixed InnoDB queue/lease tables, atomic claims, job deduplication, bounded retry/backoff, stale recovery, and ownership checks.
 - Added local attachment/thumbnail discovery, individual Media Library queue action, optional off-by-default upload enqueueing, paginated bulk scan, queue controls, persisted progress, and bounded WP-CLI worker.
-- Processing creates separate validated `.jio.webp`/`.jio.avif` files with hidden structured attachment metadata. Originals and core attachment metadata are preserved; derivatives are inactive for frontend delivery.
+- Processing creates separate validated, generation-specific `.jio-{identity}.webp`/`.jio-{identity}.avif` files with hidden structured attachment metadata. Same-stem source files and regenerated generations cannot collide. Originals and core attachment metadata are preserved; derivatives are inactive for frontend delivery.
 - Added packaged-plugin integration cases for image processing, source preservation, queue lifecycle, scanner pagination, and authorization. The final PHP 8.3 WordPress/encoder integration passed in [run 42748365437](https://github.com/atiroop/jocky-image-optimizer/actions/runs/42748365437).
 - Replaced nested explicit transactions with single-statement atomic queue/lease claims to preserve WordPress PHPUnit test isolation; corrected same-second worker lease renewal and added idempotent missing-slot recovery.
 - Added minimal `*.php text eol=lf` policy for consistent Windows and CI lint behavior.

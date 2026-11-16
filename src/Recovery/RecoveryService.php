@@ -10,6 +10,7 @@ declare(strict_types=1);
 namespace Jocky\ImageOptimizer\Recovery;
 
 use Jocky\ImageOptimizer\Media\AttachmentTargetProvider;
+use Jocky\ImageOptimizer\Media\DerivativePath;
 
 /** Implements per-attachment integrity verification and non-destructive cleanup. */
 final class RecoveryService {
@@ -398,7 +399,7 @@ final class RecoveryService {
 			$status = 'source_changed';
 		} elseif ( ! hash_equals( (string) $record['source_relative_path'], $current_target['relative_path'] ) || ! hash_equals( (string) $record['source_fingerprint'], $current_target['fingerprint'] ) || ! hash_equals( (string) $record['source_mime'], $current_target['mime'] ) || ! hash_equals( (string) $record['metadata_hash'], $metadata_hash ) ) {
 			$status = 'source_changed';
-		} elseif ( ! hash_equals( $this->expected_derivative_path( (string) $record['source_relative_path'], (string) $record['output_format'], (string) $record['source_mime'] ), (string) $record['derivative_relative_path'] ) ) {
+		} elseif ( ! $this->is_expected_derivative_path( $current_target, (string) $record['output_format'], (string) $record['derivative_relative_path'] ) ) {
 			$status = 'ownership_conflict';
 		} elseif ( null === $derivative_path ) {
 			$status = 'derivative_missing';
@@ -486,7 +487,7 @@ final class RecoveryService {
 				return false;
 			}
 		}
-		if ( ! hash_equals( (string) $record['source_relative_path'], $target['relative_path'] ) || ! hash_equals( (string) $record['source_fingerprint'], $target['fingerprint'] ) || ! hash_equals( (string) $record['metadata_hash'], $this->metadata_hash( $attachment_id ) ) || ! hash_equals( $this->expected_derivative_path( (string) $record['source_relative_path'], (string) $record['output_format'], (string) $record['source_mime'] ), (string) $record['derivative_relative_path'] ) ) {
+		if ( ! hash_equals( (string) $record['source_relative_path'], $target['relative_path'] ) || ! hash_equals( (string) $record['source_fingerprint'], $target['fingerprint'] ) || ! hash_equals( (string) $record['metadata_hash'], $this->metadata_hash( $attachment_id ) ) || ! $this->is_expected_derivative_path( $target, (string) $record['output_format'], (string) $record['derivative_relative_path'] ) ) {
 			return false;
 		}
 		foreach ( $this->targets->targets( $attachment_id ) as $managed_target ) {
@@ -656,6 +657,23 @@ final class RecoveryService {
 		$directory = pathinfo( $source_relative_path, PATHINFO_DIRNAME );
 		$filename  = pathinfo( $source_relative_path, PATHINFO_FILENAME ) . '.jio.' . $extension;
 		return ( '.' === $directory ? '' : $directory . '/' ) . $filename;
+	}
+
+	/**
+	 * Accepts current generation-specific paths and previously registered legacy paths.
+	 *
+	 * @param array<string, mixed> $target Current validated source target.
+	 * @param string               $format Output MIME type.
+	 * @param string               $stored_path Stored upload-relative derivative path.
+	 */
+	private function is_expected_derivative_path( array $target, string $format, string $stored_path ): bool {
+		if ( 'source' === $format ) {
+			return DerivativePath::matches_target( $target, (string) $target['mime'], $stored_path );
+		}
+		if ( in_array( $format, array( 'image/webp', 'image/avif', 'image/jpeg', 'image/png' ), true ) ) {
+			return DerivativePath::matches_target( $target, $format, $stored_path );
+		}
+		return hash_equals( $this->expected_derivative_path( $target['relative_path'], $format, $target['mime'] ), $stored_path );
 	}
 
 	/** Returns the expected output MIME type for a stored format.

@@ -10,6 +10,7 @@ declare(strict_types=1);
 namespace Jocky\ImageOptimizer\Delivery;
 
 use Jocky\ImageOptimizer\Media\AttachmentTargetProvider;
+use Jocky\ImageOptimizer\Media\DerivativePath;
 use Jocky\ImageOptimizer\Queue\QueueSchema;
 use Jocky\ImageOptimizer\Recovery\DerivativeRepository;
 
@@ -78,7 +79,7 @@ final class DerivativeResolver {
 			$format   = (string) ( $record['output_format'] ?? '' );
 			$mime     = 'image/webp' === $format ? 'image/webp' : ( 'image/avif' === $format ? 'image/avif' : '' );
 			$relative = (string) ( $record['derivative_relative_path'] ?? '' );
-			if ( null === $target || '' === $mime || $target['relative_path'] !== (string) $record['source_relative_path'] || ! hash_equals( $target['fingerprint'], (string) $record['source_fingerprint'] ) || $target['mime'] !== (string) $record['source_mime'] || ! hash_equals( $metadata_hash, (string) $record['metadata_hash'] ) || $relative !== $this->expected_path( $target['relative_path'], $mime ) || empty( $root['basedir'] ) || ! empty( $root['error'] ) ) {
+			if ( null === $target || '' === $mime || $target['relative_path'] !== (string) $record['source_relative_path'] || ! hash_equals( $target['fingerprint'], (string) $record['source_fingerprint'] ) || $target['mime'] !== (string) $record['source_mime'] || ! hash_equals( $metadata_hash, (string) $record['metadata_hash'] ) || ! DerivativePath::matches_target( $target, $mime, $relative ) || empty( $root['basedir'] ) || ! empty( $root['error'] ) ) {
 				continue;
 			}
 			$path = trailingslashit( $root['basedir'] ) . str_replace( '/', DIRECTORY_SEPARATOR, $relative );
@@ -103,18 +104,6 @@ final class DerivativeResolver {
 		}
 		$this->memo[ $attachment_id ] = $valid;
 		return $valid;
-	}
-
-	/** Computes the one deterministic derivative path allowed for a source and format.
-	 *
-	 * @param string $source Upload-relative source path.
-	 * @param string $mime   Supported derivative MIME type.
-	 * @return string Expected upload-relative derivative path.
-	 */
-	private function expected_path( string $source, string $mime ): string {
-		$directory = pathinfo( $source, PATHINFO_DIRNAME );
-		$filename  = pathinfo( $source, PATHINFO_FILENAME ) . ( 'image/webp' === $mime ? '.jio.webp' : '.jio.avif' );
-		return '.' === $directory ? $filename : $directory . '/' . $filename;
 	}
 
 	/** Rejects a derivative path containing any symlink component.
