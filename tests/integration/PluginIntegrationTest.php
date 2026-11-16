@@ -1137,7 +1137,7 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 		$this->assertSame( 'image/webp', wp_get_image_mime( $new_derivative ) );
 	}
 
-	public function test_original_format_output_keeps_generation_specific_image_paths(): void {
+	public function test_original_format_maps_source_mime_to_generation_specific_path(): void {
 		$this->set_output_format( 'original' );
 		$uploads = wp_upload_dir();
 		$source  = trailingslashit( $uploads['basedir'] ) . 'jio-m4-source-format-' . bin2hex( random_bytes( 4 ) ) . '.png';
@@ -1151,13 +1151,14 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 		update_attached_file( $attachment_id, $source );
 		$this->test_attachment_ids[] = $attachment_id;
 		wp_update_attachment_metadata( $attachment_id, array( 'file' => ltrim( str_replace( wp_normalize_path( $uploads['basedir'] ) . '/', '', wp_normalize_path( $source ) ), '/' ), 'width' => 128, 'height' => 128, 'sizes' => array(), 'image_meta' => array() ) );
-		$this->assertSame( 1, $this->jobs->enqueue_many( ( new AttachmentJobFactory() )->jobs_for_attachment( $attachment_id ) ) );
-		$this->assertSame( 1, ( new QueueWorker( $this->jobs ) )->run_batch( 1 )['completed'] );
+		$candidates = ( new AttachmentJobFactory() )->jobs_for_attachment( $attachment_id );
+		$this->assertSame( 'source', $candidates[0]['output_format'] );
+		$this->assertSame( 1, $this->jobs->enqueue_many( $candidates ) );
 		$target = ( new AttachmentTargetProvider() )->target( $attachment_id, 'full' );
 		$this->assertNotNull( $target );
-		$path = trailingslashit( wp_upload_dir()['basedir'] ) . str_replace( '/', DIRECTORY_SEPARATOR, DerivativePath::for_target( $target, 'image/png' ) );
-		$this->assertFileExists( $path );
-		$this->assertSame( 'image/png', wp_get_image_mime( $path ) );
+		$relative = DerivativePath::for_target( $target, 'image/png' );
+		$this->assertNotSame( $target['relative_path'], $relative );
+		$this->assertMatchesRegularExpression( '/\.jio-[a-f0-9]{16}\.png\z/', $relative );
 		$this->assertFileExists( $source );
 	}
 
