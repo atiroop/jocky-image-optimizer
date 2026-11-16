@@ -1081,7 +1081,7 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 	}
 
 	public function test_global_cron_is_held_during_scoped_maintenance_and_resumes_afterward(): void {
-		$this->set_output_format( 'original' );
+		$this->set_output_format( 'webp' );
 		[ $first_selected_id ]  = $this->create_png_attachment( 'maintenance-selected-first', false );
 		[ $unrelated_id ]       = $this->create_png_attachment( 'maintenance-unrelated-job-20', false );
 		[ $second_selected_id ] = $this->create_png_attachment( 'maintenance-selected-second', false );
