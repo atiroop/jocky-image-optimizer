@@ -191,7 +191,7 @@ if grep -q "\"attachment_id\":$JIO_SCOPE_OTHER_ID" <<< "$scoped_output"; then
 	echo 'Scoped worker returned a result for an unselected attachment.' >&2
 	exit 1
 fi
-scope_states="$(wp_cli eval '$table = \Jocky\ImageOptimizer\Queue\QueueSchema::jobs_table(); $other = (int) getenv("JIO_SCOPE_OTHER_ID"); $selected = (int) getenv("JIO_SCOPE_SELECTED_ID"); echo wp_json_encode(array("other" => $wpdb->get_col($wpdb->prepare("SELECT status FROM {$table} WHERE attachment_id = %d ORDER BY id", $other)), "selected" => $wpdb->get_col($wpdb->prepare("SELECT status FROM {$table} WHERE attachment_id = %d ORDER BY id", $selected))));')"
+scope_states="$(wp_cli eval 'global $wpdb; $table = \Jocky\ImageOptimizer\Queue\QueueSchema::jobs_table(); $other = (int) getenv("JIO_SCOPE_OTHER_ID"); $selected = (int) getenv("JIO_SCOPE_SELECTED_ID"); echo wp_json_encode(array("other" => $wpdb->get_col($wpdb->prepare("SELECT status FROM {$table} WHERE attachment_id = %d ORDER BY id", $other)), "selected" => $wpdb->get_col($wpdb->prepare("SELECT status FROM {$table} WHERE attachment_id = %d ORDER BY id", $selected))));')"
 printf '%s\n' "$scope_states"
 grep -q '"other":\["pending"\]' <<< "$scope_states"
 grep -Eq '"selected":\[("completed"|"skipped")\]' <<< "$scope_states"
@@ -200,7 +200,7 @@ scoped_cron="$(wp_cli eval 'echo wp_next_scheduled("jio_process_queue") ? "SCHED
 global_output="$(wp_cli jio worker run --batch-size=1)"
 printf '%s\n' "$global_output"
 grep -q 'Claimed 1;' <<< "$global_output"
-scope_states="$(wp_cli eval '$table = \Jocky\ImageOptimizer\Queue\QueueSchema::jobs_table(); echo wp_json_encode($wpdb->get_col($wpdb->prepare("SELECT status FROM {$table} WHERE attachment_id = %d ORDER BY id", (int) getenv("JIO_SCOPE_OTHER_ID"))));')"
+scope_states="$(wp_cli eval 'global $wpdb; $table = \Jocky\ImageOptimizer\Queue\QueueSchema::jobs_table(); echo wp_json_encode($wpdb->get_col($wpdb->prepare("SELECT status FROM {$table} WHERE attachment_id = %d ORDER BY id", (int) getenv("JIO_SCOPE_OTHER_ID"))));')"
 grep -Eq '^\["(completed|skipped)"\]$' <<< "$scope_states"
 
 wp_debug_output="$(wp_cli eval 'echo defined("WP_DEBUG") ? "WP_DEBUG_DEFINED\n" : "WP_DEBUG_MISSING\n";' 2>&1)"
