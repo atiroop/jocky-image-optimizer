@@ -102,11 +102,17 @@ final class AttachmentProcessor {
 				'error_code'   => 'unsupported_format',
 			);
 		}
-		$directory   = dirname( $target['source_path'] );
-		$basename    = pathinfo( $target['source_path'], PATHINFO_FILENAME );
-		$destination = $directory . DIRECTORY_SEPARATOR . $basename . '.jio.' . $extension;
-		$uploads     = wp_upload_dir();
-		$root        = isset( $uploads['basedir'] ) ? realpath( $uploads['basedir'] ) : false;
+		$relative_destination = DerivativePath::for_target( $target, $target_mime );
+		if ( '' === $relative_destination ) {
+			return array(
+				'status'       => 'skipped',
+				'input_bytes'  => $target['bytes'],
+				'output_bytes' => null,
+				'error_code'   => 'unsupported_format',
+			);
+		}
+		$uploads = wp_upload_dir();
+		$root    = isset( $uploads['basedir'] ) ? realpath( $uploads['basedir'] ) : false;
 		if ( false === $root ) {
 			return array(
 				'status'       => 'skipped',
@@ -115,6 +121,7 @@ final class AttachmentProcessor {
 				'error_code'   => 'uploads_unavailable',
 			);
 		}
+		$destination          = rtrim( $root, '/\\' ) . DIRECTORY_SEPARATOR . str_replace( '/', DIRECTORY_SEPARATOR, $relative_destination );
 		$relative_destination = $this->relative_path( $root, $destination );
 		if ( null === $relative_destination ) {
 			return array(

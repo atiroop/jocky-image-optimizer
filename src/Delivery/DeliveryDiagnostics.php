@@ -9,6 +9,8 @@ declare(strict_types=1);
 
 namespace Jocky\ImageOptimizer\Delivery;
 
+use Jocky\ImageOptimizer\Media\DerivativePath;
+
 use Jocky\ImageOptimizer\Queue\QueueSchema;
 
 // phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Admin-only aggregate over plugin-owned registry; no upload traversal or file hashing occurs.
@@ -27,7 +29,7 @@ final class DeliveryDiagnostics {
 		$posts     = $wpdb->posts;
 		$totals    = $wpdb->get_row( "SELECT COUNT(*) AS total, SUM(validation_status = 'valid' AND lifecycle_status = 'active') AS registered_valid, SUM(validation_status <> 'valid' OR lifecycle_status <> 'active') AS registry_invalid FROM {$table}", ARRAY_A );
 		$eligible  = (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$posts} WHERE post_type = %s AND post_mime_type IN (%s,%s)", 'attachment', 'image/jpeg', 'image/png' ) );
-		$sample    = (array) $wpdb->get_results( "SELECT id,attachment_id,source_relative_path,derivative_relative_path,output_format,output_bytes,derivative_identity,validation_status,lifecycle_status FROM {$table} WHERE lifecycle_status = 'active' ORDER BY id DESC LIMIT 25", ARRAY_A );
+		$sample    = (array) $wpdb->get_results( "SELECT id,attachment_id,source_relative_path,source_fingerprint,source_mime,derivative_relative_path,output_format,output_bytes,derivative_identity,validation_status,lifecycle_status FROM {$table} WHERE lifecycle_status = 'active' ORDER BY id DESC LIMIT 25", ARRAY_A );
 		$resolver  = new DerivativeResolver();
 		$valid_ids = array();
 		foreach ( array_unique( array_map( 'intval', wp_list_pluck( $sample, 'attachment_id' ) ) ) as $attachment_id ) {
@@ -68,15 +70,26 @@ final class DeliveryDiagnostics {
 	 * @return bool Whether the exact expected local derivative is missing.
 	 */
 	private function safely_missing( array $record ): bool {
-		$source    = (string) $record['source_relative_path'];
-		$format    = (string) $record['output_format'];
-		$extension = 'image/webp' === $format ? '.jio.webp' : ( 'image/avif' === $format ? '.jio.avif' : '' );
-		if ( '' === $extension || str_contains( $source, '\\' ) || preg_match( '#(^|/)\.\.(/|$)#', $source ) ) {
+		$source   = (string) $record['source_relative_path'];
+		$mime     = 'source' === (string) $record['output_format'] ? (string) $record['source_mime'] : (string) $record['output_format'];
+		$expected = DerivativePath::for_target(
+			array(
+				'relative_path' => $source,
+				'fingerprint'   => (string) ( $record['source_fingerprint'] ?? '' ),
+			),
+			$mime
+		);
+		if ( '' === $expected || str_contains( $source, '\\' ) || preg_match( '#(^|/)\.\.(/|$)#', $source ) ) {
 			return false;
 		}
-		$directory = pathinfo( $source, PATHINFO_DIRNAME );
-		$expected  = ( '.' === $directory ? '' : $directory . '/' ) . pathinfo( $source, PATHINFO_FILENAME ) . $extension;
-		if ( $expected !== (string) $record['derivative_relative_path'] ) {
+		if ( ! DerivativePath::matches_target(
+			array(
+				'relative_path' => $source,
+				'fingerprint'   => (string) $record['source_fingerprint'],
+			),
+			$mime,
+			(string) $record['derivative_relative_path']
+		) ) {
 			return false;
 		}
 		$uploads = wp_upload_dir();

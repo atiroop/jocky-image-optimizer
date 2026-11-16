@@ -142,7 +142,7 @@ async function inspectLoadedImage(page, selector, expectedMime, responses, expec
   assert.equal(Number(result.heightAttribute), Number(fixture.attachments[asset].metadata.height), 'Original height attribute is preserved.');
   if (expectedOriginal) {
     assert.equal(result.src, new URL(fixture.attachments[asset].url).href, 'Fallback src remains the original attachment URL.');
-    assert.ok(!result.currentSrc.includes('.jio.'), 'Browser selected a WordPress original responsive candidate.');
+    assert.ok(!/\.jio-[a-f0-9]{16}\.(?:webp|avif)$/.test(new URL(result.currentSrc).pathname), 'Browser selected a WordPress original responsive candidate.');
     assert.equal(result.hasPicture, false, 'Uncertain or unavailable derivatives leave the original image markup unchanged.');
     assert.equal(responses.get(result.currentSrc)?.mime, asset === 'jpeg' ? 'image/jpeg' : 'image/png');
   } else {
@@ -151,7 +151,7 @@ async function inspectLoadedImage(page, selector, expectedMime, responses, expec
     assert.ok(requested, 'The selected derivative must have a real browser network response.');
     assert.equal(requested.status, 200);
     assert.equal(requested.mime, expectedMime, 'The selected resource MIME must match the browser-selected source format.');
-    assert.ok(result.currentSrc.includes('.jio.'), 'The loaded image must be a registered derivative URL.');
+    assert.match(new URL(result.currentSrc).pathname, /\.jio-[a-f0-9]{16}\.(?:webp|avif)$/, 'The loaded image must be a registered derivative URL.');
     assert.ok(result.picture.includes(`type="${expectedMime}"`), 'The picture contains the selected format source.');
   }
   console.log(`Loaded ${expectedOriginal ? 'original' : expectedMime}: ${result.currentSrc} (${result.naturalWidth}x${result.naturalHeight})`);
@@ -268,8 +268,8 @@ try {
     }
     const imageWidget = await inspectLoadedImage(page, '[data-id="jioimg1"] img', 'image/avif', responses, false, 'png', 'elementor-png');
     const imageBox = await inspectLoadedImage(page, '[data-id="jioibox1"] img', 'image/avif', responses, false, 'jpeg', 'elementor-jpeg');
-    assert.ok(imageWidget.currentSrc.endsWith('.jio.avif'));
-    assert.ok(imageBox.currentSrc.endsWith('.jio.avif'));
+    assert.match(imageWidget.currentSrc, /\.jio-[a-f0-9]{16}\.avif$/);
+    assert.match(imageBox.currentSrc, /\.jio-[a-f0-9]{16}\.avif$/);
     assert.equal(await page.locator('[data-id="jioimg1"] a').getAttribute('href'), `${baseUrl}/elementor-image-target/`);
     assert.equal(await page.locator('[data-id="jioibox1"] .elementor-image-box-img a').getAttribute('href'), `${baseUrl}/elementor-box-target/`);
     assert.match(await page.locator('[data-id="jioimg1"]').innerText(), /JIO Elementor image caption/);

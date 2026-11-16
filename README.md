@@ -1,8 +1,14 @@
-# Jocky Image Optimizer 0.6.1-beta.1
+# Jocky Image Optimizer 0.6.2
 
 Jocky Image Optimizer is a self-hosted WordPress plugin for local image optimization. It creates separately stored JPEG/PNG optimization and WebP/AVIF derivatives. Frontend delivery is disabled by default; when enabled, eligible derivatives are exposed with browser-native `<picture>` sources and the original WordPress `<img>` remains the fallback.
 
 The `VERSION` file is the authoritative release version. Packaging and CI reject mismatches in the plugin header, runtime constant, this title, changelog release heading, ZIP metadata, filename, or artifact name. The beta ZIP is built and tested by GitHub Actions on PHP 8.3 with WordPress 6.6.11 and 7.1.4. See [VALIDATION.md](VALIDATION.md) for current validation evidence and limitations.
+
+## Attachment completion contract
+
+JIO 0.6.2 exposes `Jocky\ImageOptimizer\Integration\AttachmentReadiness::state( $attachment_id )`. The state includes contract version, attachment ID, a generation digest for the current expected variant/format set, expected and completed keys, terminal outcome (`pending`, `running`, `completed`, `partial`, `failed`, `skipped`, or `invalidated`), a registry revision digest, and a terminal flag. Source changes that leave only old fingerprint rows are reported as invalidated; expected new work remains pending/running. `jio_attachment_optimization_terminal_v1` is emitted only after a durable job transition and the aggregate expected set is terminal. Consumers must make duplicate notifications idempotent. JIO's existing per-derivative update action is not an attachment completion signal.
+
+The additive `jio_delivery_resource_url_v1` filter receives the URL selected by JIO, attachment ID, variant key, MIME type, and current generation. It must return the same local URL when no safe remote mapping exists. It changes resource URLs only; JIO remains the sole owner of `<picture>` and responsive-format selection.
 
 ## Recovery and derivative lifecycle
 
@@ -24,8 +30,8 @@ Image processing requires locally installed `jpegtran`, `djpeg` plus MozJPEG-com
 
 ## Install the beta from the WordPress Dashboard
 
-1. After the 0.6.1-beta.1 GitHub Actions run succeeds, download the `jocky-image-optimizer-0.6.1-beta.1` artifact from that run. The artifact is not available until the run completes successfully.
-2. Extract the downloaded Actions artifact archive. It contains the installable `jocky-image-optimizer-0.6.1-beta.1.zip`.
+1. After the 0.6.2 GitHub Actions run succeeds, download the `jocky-image-optimizer-0.6.2` artifact from that run. The artifact is not available until the run completes successfully.
+2. Extract the downloaded Actions artifact archive. It contains the installable `jocky-image-optimizer-0.6.2.zip`.
 3. In WordPress, open **Plugins → Add New Plugin → Upload Plugin**, select that inner plugin ZIP, and click **Install Now**.
 4. Click **Activate Plugin** after installation completes.
 5. Open **Image Optimizer** to review encoder availability and queue progress. Open **Image Optimizer → Settings** to choose output formats and other settings.
@@ -42,7 +48,7 @@ For staging, take a database and uploads backup first. The plugin writes separat
 
 Settings are registered through the WordPress Settings API, capability-gated with `manage_options`, nonce-protected by `settings_fields()`, and sanitized on save. Automatic optimization is off by default. The Media Library row action can queue a selected attachment, and the dashboard can scan the library in pages, pause/resume, cancel pending jobs, retry failures, and show persisted results. Queue rows and worker/scanner leases are stored in prefixed InnoDB tables; schema versioning runs on activation and subsequent plugin loads. WP-Cron processes one job per tick and depends on site traffic unless an external scheduler calls WordPress cron. For controlled execution, use `wp jio worker run --batch-size=10` from WP-CLI. The concurrency setting caps simultaneous workers at four and defaults to one. See `ARCHITECTURE.md` and `VALIDATION.md` for implementation and verification status.
 
-The optional upload hook only enqueues after WordPress generates attachment metadata; it does not process images in the upload request. Eligible local JPEG/PNG originals and registered sizes are processed into separate `.jio.webp`/`.jio.avif` derivatives. `_wp_attached_file`, core image metadata, source files, and thumbnails are not replaced. Attachments whose effective file path is filtered/offloaded or outside the current uploads root are skipped. No Cloudflare R2 compatibility is claimed.
+The optional upload hook only enqueues after WordPress generates attachment metadata; it does not process images in the upload request. Eligible local JPEG/PNG originals and registered sizes are processed into separate generation-specific `.jio-{identity}.webp`/`.jio-{identity}.avif` derivatives, so same-stem files and regenerated sources do not collide. `_wp_attached_file`, core image metadata, source files, and thumbnails are not replaced. Attachments whose effective file path is filtered/offloaded or outside the current uploads root are skipped. No Cloudflare R2 compatibility is claimed.
 
 ### Frontend delivery beta
 

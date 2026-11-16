@@ -6,6 +6,7 @@ use Jocky\ImageOptimizer\Admin\AdminPages;
 use Jocky\ImageOptimizer\CapabilityDetector;
 use Jocky\ImageOptimizer\Delivery\FrontendDelivery;
 use Jocky\ImageOptimizer\Media\AttachmentTargetProvider;
+use Jocky\ImageOptimizer\Media\DerivativePath;
 use Jocky\ImageOptimizer\Media\MediaIntegration;
 use Jocky\ImageOptimizer\Queue\AttachmentJobFactory;
 use Jocky\ImageOptimizer\Queue\BulkScanner;
@@ -17,6 +18,7 @@ use Jocky\ImageOptimizer\Recovery\AttachmentOperationLock;
 use Jocky\ImageOptimizer\Recovery\RecoveryService;
 use Jocky\ImageOptimizer\Recovery\RecoveryWorker;
 use Jocky\ImageOptimizer\Plugin;
+use Jocky\ImageOptimizer\Integration\AttachmentReadiness;
 use Jocky\ImageOptimizer\Settings;
 
 /** Tests the packaged plugin in the real WordPress test runtime. */
@@ -72,7 +74,11 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 			wp_delete_attachment( $attachment_id, true );
 		}
 		foreach ( $this->test_media_directories as $directory ) {
-			foreach ( glob( trailingslashit( $directory ) . '*.jio.*' ) ?: array() as $derivative ) {
+			$derivatives = array_merge(
+				glob( trailingslashit( $directory ) . '*.jio.*' ) ?: array(),
+				glob( trailingslashit( $directory ) . '*.jio-*.*' ) ?: array()
+			);
+			foreach ( array_unique( $derivatives ) as $derivative ) {
 				if ( is_file( $derivative ) && ! is_link( $derivative ) ) {
 					unlink( $derivative );
 				}
@@ -250,7 +256,7 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 	public function test_beta_zip_activation_initializes_queue_schema_and_safe_defaults(): void {
 		global $wpdb;
 		$plugin_data = get_plugin_data( JIO_FILE, false, false );
-		$this->assertSame( '0.6.1-beta.1', JIO_VERSION );
+		$this->assertSame( '0.6.2', JIO_VERSION );
 		$this->assertSame( JIO_VERSION, $plugin_data['Version'], 'WordPress reads the uploaded plugin header version' );
 		$this->assertTrue( version_compare( $plugin_data['Version'], '0.6.0-beta.1', '>' ), 'WordPress native version comparison recognizes the patch beta as newer than the installed beta' );
 		$this->assertTrue( version_compare( '0.6.1-beta.1', '0.6.1-beta.2', '<' ), 'WordPress native comparison orders patch prerelease identifiers' );
@@ -263,6 +269,20 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 		$this->assertSame( QueueSchema::jobs_table(), $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', QueueSchema::jobs_table() ) ) );
 		$this->assertSame( QueueSchema::slots_table(), $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', QueueSchema::slots_table() ) ) );
 		$this->assertSame( array( 0, 1, 2, 3, 4 ), array_map( 'intval', (array) $wpdb->get_col( 'SELECT slot_id FROM ' . QueueSchema::slots_table() . ' ORDER BY slot_id ASC' ) ) );
+	}
+
+	public function test_attachment_readiness_contract_is_versioned_and_pending_until_every_expected_job_is_terminal(): void {
+		[ $attachment_id ] = $this->create_png_attachment( 'readiness-pending', false );
+		$this->set_output_format( 'both' );
+		$state = AttachmentReadiness::state( $attachment_id );
+		$this->assertSame( 1, $state['contract_version'] );
+		$this->assertSame( $attachment_id, $state['attachment_id'] );
+		$this->assertNotEmpty( $state['generation'] );
+		$this->assertNotEmpty( $state['expected'] );
+		$this->assertSame( array(), $state['completed'] );
+		$this->assertSame( 'pending', $state['outcome'] );
+		$this->assertFalse( $state['terminal'] );
+		$this->assertNotEmpty( $state['revision'] );
 	}
 
 	public function test_media_row_action_and_queue_controls_require_administrator_capability(): void {
@@ -292,7 +312,7 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 		[ $attachment_id, $source ] = $this->create_png_attachment( 'admin-request-safety', false );
 		$this->assertSame( 1, $this->jobs->enqueue_many( ( new AttachmentJobFactory() )->jobs_for_attachment( $attachment_id ) ) );
 		$this->assertSame( 1, ( new QueueWorker( $this->jobs ) )->run_batch( 1 )['completed'] );
-		$derivative = preg_replace( '/\\.png$/', '.jio.webp', $source );
+		$derivative = $this->derivative_path( $attachment_id, 'full' );
 		$this->assertFileExists( $derivative );
 		$derivative_hash = hash_file( 'sha256', $derivative );
 		$original_post   = $_POST;
@@ -485,8 +505,8 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 		$this->assertSame( $source_hash, hash_file( 'sha256', $source ) );
 		$this->assertSame( $attached, get_post_meta( $attachment_id, '_wp_attached_file', true ) );
 		$this->assertSame( $metadata, wp_get_attachment_metadata( $attachment_id ), 'WordPress thumbnail metadata remains unchanged' );
-		$this->assertFileExists( preg_replace( '/\.png$/', '.jio.webp', $source ) );
-		$this->assertFileExists( preg_replace( '/\.png$/', '.jio.webp', dirname( $source ) . '/single-thumbnail.png' ) );
+		$this->assertFileExists( $this->derivative_path( $attachment_id, 'full' ) );
+		$this->assertFileExists( $this->derivative_path( $attachment_id, 'size:medium' ) );
 		$records = array_filter( get_post_meta( $attachment_id ), static fn ( $key ): bool => str_starts_with( (string) $key, '_jio_derivative_' ), ARRAY_FILTER_USE_KEY );
 		$this->assertCount( 2, $records );
 		foreach ( array_keys( $records ) as $meta_key ) {
@@ -518,7 +538,7 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 		$this->assertSame( $source_hash, hash_file( 'sha256', $source ) );
 		$this->assertSame( $attached, get_post_meta( $attachment_id, '_wp_attached_file', true ) );
 		$this->assertSame( $metadata, wp_get_attachment_metadata( $attachment_id ) );
-		$this->assertFileExists( preg_replace( '/\.jpg$/', '.jio.webp', $source ) );
+		$this->assertFileExists( $this->derivative_path( $attachment_id, 'full' ) );
 		$this->assertSame( 0, $this->jobs->pending_count(), 'bounded worker batch leaves no second job for this JPEG' );
 	}
 
@@ -656,9 +676,9 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 		$this->assertSame( 'ready', $plan['status'] );
 		$this->assertCount( 2, $plan['eligible'] );
 		$this->assertSame( 'confirmation_required', $service->cleanup_attachment( $attachment_id, false )['status'] );
-		$this->assertFileExists( preg_replace( '/\.png$/', '.jio.webp', $source ) );
+		$this->assertFileExists( $this->derivative_path( $attachment_id, 'full' ) );
 
-		$derivative  = preg_replace( '/\.png$/', '.jio.webp', $source );
+		$derivative  = $this->derivative_path( $attachment_id, 'full' );
 		$valid_bytes = file_get_contents( $derivative );
 		file_put_contents( $derivative, 'corrupt derivative data' );
 		$corrupt = $service->verify_attachment( $attachment_id );
@@ -711,7 +731,7 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 		$source_bytes                = file_get_contents( $source );
 		$this->assertSame( 1, $this->jobs->enqueue_many( ( new AttachmentJobFactory() )->jobs_for_attachment( $attachment_id ) ) );
 		$this->assertSame( 1, ( new QueueWorker( $this->jobs ) )->run_batch( 1 )['completed'] );
-		$derivative = preg_replace( '/\.png$/', '.jio.webp', $source );
+		$derivative = $this->derivative_path( $attachment_id, 'full' );
 		$this->assertFileExists( $derivative );
 		$service = new RecoveryService();
 
@@ -734,7 +754,7 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 		[ $attachment_id, $source ] = $this->create_png_attachment( 'recovery-metadata-race', false );
 		$this->assertSame( 1, $this->jobs->enqueue_many( ( new AttachmentJobFactory() )->jobs_for_attachment( $attachment_id ) ) );
 		$this->assertSame( 1, ( new QueueWorker( $this->jobs ) )->run_batch( 1 )['completed'] );
-		$derivative     = preg_replace( '/\\.png$/', '.jio.webp', $source );
+		$derivative     = $this->derivative_path( $attachment_id, 'full' );
 		$source_hash    = hash_file( 'sha256', $source );
 		$original_meta  = get_post_meta( $attachment_id, '_wp_attached_file', true );
 		$registry       = QueueSchema::derivatives_table();
@@ -778,7 +798,7 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 		$source_hash                = hash_file( 'sha256', $source );
 		$this->assertSame( 1, $this->jobs->enqueue_many( ( new AttachmentJobFactory() )->jobs_for_attachment( $attachment_id ) ) );
 		$this->assertSame( 1, ( new QueueWorker( $this->jobs ) )->run_batch( 1 )['completed'] );
-		$derivative = preg_replace( '/\\.png$/', '.jio.webp', $source );
+		$derivative = $this->derivative_path( $attachment_id, 'full' );
 		$this->assertFileExists( $derivative );
 		$registry = QueueSchema::derivatives_table();
 		$row      = (array) $wpdb->get_row( $wpdb->prepare( "SELECT * FROM {$registry} WHERE attachment_id = %d LIMIT 1", $attachment_id ), ARRAY_A );
@@ -829,7 +849,7 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 		$audit_source_hash                     = hash_file( 'sha256', $audit_source );
 		$this->assertSame( 1, $this->jobs->enqueue_many( ( new AttachmentJobFactory() )->jobs_for_attachment( $audit_attachment_id ) ) );
 		$this->assertSame( 1, ( new QueueWorker( $this->jobs ) )->run_batch( 1 )['completed'] );
-		$audit_derivative = preg_replace( '/\\.png$/', '.jio.webp', $audit_source );
+		$audit_derivative = $this->derivative_path( $audit_attachment_id, 'full' );
 		$events            = QueueSchema::events_table();
 		$fail_audit        = static function ( string $query ) use ( $events ): string {
 			if ( str_starts_with( $query, "INSERT INTO `{$events}` " ) ) {
@@ -873,7 +893,7 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 		$this->assertSame( 2, (int) $batch['cleaned_count'] );
 		$this->assertSame( $metadata, wp_get_attachment_metadata( $attachment_id ) );
 		$this->assertSame( $source_hash, hash_file( 'sha256', $source ) );
-		$this->assertSame( array(), glob( dirname( $source ) . DIRECTORY_SEPARATOR . '*.jio.webp' ) ?: array() );
+		$this->assertSame( array(), glob( dirname( $source ) . DIRECTORY_SEPARATOR . '*.jio-*.webp' ) ?: array() );
 		$this->assertSame( '', $wpdb->last_error );
 	}
 
@@ -1049,6 +1069,110 @@ final class PluginIntegrationTest extends WP_UnitTestCase {
 	 * @param bool   $with_thumb Whether to create a thumbnail variant.
 	 * @return array{int,string,array<string,mixed>} Attachment ID, source path, and persisted metadata.
 	 */
+	public function test_same_stem_sources_and_regenerated_generations_use_distinct_derivatives(): void {
+		$this->set_output_format( 'webp' );
+		$uploads   = wp_upload_dir();
+		$directory = trailingslashit( $uploads['basedir'] ) . 'jio-m4-collision-' . bin2hex( random_bytes( 4 ) );
+		wp_mkdir_p( $directory );
+		$this->test_media_directories[] = $directory;
+		$jpeg_path                     = trailingslashit( $directory ) . 'shared.jpg';
+		$png_path                      = trailingslashit( $directory ) . 'shared.png';
+		$image                         = imagecreatetruecolor( 24, 16 );
+		$this->assertNotFalse( $image );
+		imagefill( $image, 0, 0, imagecolorallocate( $image, 40, 100, 180 ) );
+		$this->assertTrue( imagejpeg( $image, $jpeg_path, 88 ) );
+		$this->assertTrue( imagepng( $image, $png_path ) );
+		imagedestroy( $image );
+		$attachment_ids = array();
+		foreach ( array( 'image/jpeg' => $jpeg_path, 'image/png' => $png_path ) as $mime => $path ) {
+			$attachment_id = wp_insert_attachment( array( 'post_mime_type' => $mime, 'post_title' => 'JIO same stem', 'post_status' => 'inherit' ), $path, 0, true );
+			$this->assertIsInt( $attachment_id );
+			update_attached_file( $attachment_id, $path );
+			wp_update_attachment_metadata(
+				$attachment_id,
+				array(
+					'file'       => ltrim( str_replace( wp_normalize_path( $uploads['basedir'] ) . '/', '', wp_normalize_path( $path ) ), '/' ),
+					'width'      => 24,
+					'height'     => 16,
+					'sizes'      => array(),
+					'image_meta' => array(),
+				)
+			);
+			$this->test_attachment_ids[] = $attachment_id;
+			$attachment_ids[]            = $attachment_id;
+		}
+		$jpeg_hash = hash_file( 'sha256', $jpeg_path );
+		$png_hash  = hash_file( 'sha256', $png_path );
+		foreach ( $attachment_ids as $attachment_id ) {
+			$this->assertSame( 1, $this->jobs->enqueue_many( ( new AttachmentJobFactory() )->jobs_for_attachment( $attachment_id ) ) );
+		}
+		$this->assertSame( 2, ( new QueueWorker( $this->jobs ) )->run_batch( 2 )['completed'] );
+		$jpeg_derivative = $this->derivative_path( $attachment_ids[0], 'full' );
+		$png_derivative  = $this->derivative_path( $attachment_ids[1], 'full' );
+		$this->assertNotSame( $jpeg_derivative, $png_derivative, 'same-stem JPEG and PNG sources cannot claim one output path' );
+		$this->assertFileExists( $jpeg_derivative );
+		$this->assertFileExists( $png_derivative );
+		$this->assertSame( 'image/webp', wp_get_image_mime( $jpeg_derivative ) );
+		$this->assertSame( 'image/webp', wp_get_image_mime( $png_derivative ) );
+		$this->assertSame( $jpeg_hash, hash_file( 'sha256', $jpeg_path ) );
+		$this->assertSame( $png_hash, hash_file( 'sha256', $png_path ) );
+
+		$regenerated = imagecreatetruecolor( 25, 16 );
+		$this->assertNotFalse( $regenerated );
+		imagefill( $regenerated, 0, 0, imagecolorallocate( $regenerated, 200, 30, 60 ) );
+		$this->assertTrue( imagepng( $regenerated, $png_path ) );
+		imagedestroy( $regenerated );
+		$targets    = new AttachmentTargetProvider();
+		$old_target = $targets->target( $attachment_ids[1], 'full' );
+		clearstatcache( true, $png_path );
+		touch( $png_path, time() + 2 );
+		$new_target = $targets->target( $attachment_ids[1], 'full' );
+		$this->assertNotSame( $old_target['fingerprint'], $new_target['fingerprint'] );
+		$this->assertSame( 1, $this->jobs->enqueue_many( ( new AttachmentJobFactory() )->jobs_for_attachment( $attachment_ids[1] ) ) );
+		$this->assertSame( 1, ( new QueueWorker( $this->jobs ) )->run_batch( 1 )['completed'] );
+		$new_derivative = $this->derivative_path( $attachment_ids[1], 'full' );
+		$this->assertNotSame( $png_derivative, $new_derivative, 'a regenerated source receives a new generation-specific output path' );
+		$this->assertFileExists( $png_derivative, 'older output remains intact for safe review and cleanup' );
+		$this->assertFileExists( $new_derivative );
+		$this->assertSame( 'image/webp', wp_get_image_mime( $new_derivative ) );
+	}
+
+	public function test_original_format_maps_source_mime_to_generation_specific_path(): void {
+		$this->set_output_format( 'original' );
+		$uploads = wp_upload_dir();
+		$source  = trailingslashit( $uploads['basedir'] ) . 'jio-m4-source-format-' . bin2hex( random_bytes( 4 ) ) . '.png';
+		$image   = imagecreatetruecolor( 128, 128 );
+		$this->assertNotFalse( $image );
+		imagefill( $image, 0, 0, imagecolorallocate( $image, 20, 80, 150 ) );
+		$this->assertTrue( imagepng( $image, $source, 0 ), 'Low-compression fixture gives the optimizer measurable lossless savings.' );
+		imagedestroy( $image );
+		$attachment_id = wp_insert_attachment( array( 'post_mime_type' => 'image/png', 'post_title' => 'JIO source format', 'post_status' => 'inherit' ), $source, 0, true );
+		$this->assertIsInt( $attachment_id );
+		update_attached_file( $attachment_id, $source );
+		$this->test_attachment_ids[] = $attachment_id;
+		wp_update_attachment_metadata( $attachment_id, array( 'file' => ltrim( str_replace( wp_normalize_path( $uploads['basedir'] ) . '/', '', wp_normalize_path( $source ) ), '/' ), 'width' => 128, 'height' => 128, 'sizes' => array(), 'image_meta' => array() ) );
+		$candidates = ( new AttachmentJobFactory() )->jobs_for_attachment( $attachment_id );
+		$this->assertSame( 'source', $candidates[0]['output_format'] );
+		$this->assertSame( 1, $this->jobs->enqueue_many( $candidates ) );
+		$target = ( new AttachmentTargetProvider() )->target( $attachment_id, 'full' );
+		$this->assertNotNull( $target );
+		$relative = DerivativePath::for_target( $target, 'image/png' );
+		$this->assertNotSame( $target['relative_path'], $relative );
+		$this->assertMatchesRegularExpression( '/\.jio-[a-f0-9]{16}\.png\z/', $relative );
+		$this->assertFileExists( $source );
+	}
+
+	/** Returns the expected generation-specific derivative for an attachment variant. */
+	private function derivative_path( int $attachment_id, string $variant ): string {
+		$target = ( new AttachmentTargetProvider() )->target( $attachment_id, $variant );
+		if ( null === $target ) {
+			return '';
+		}
+		$uploads  = wp_upload_dir();
+		$relative = DerivativePath::for_target( $target, 'image/webp' );
+		return trailingslashit( $uploads['basedir'] ) . str_replace( '/', DIRECTORY_SEPARATOR, $relative );
+	}
+
 	private function create_png_attachment( string $name, bool $with_thumb ): array {
 		$uploads   = wp_upload_dir();
 		$directory = trailingslashit( $uploads['basedir'] ) . 'jio-m4-' . sanitize_file_name( $name ) . '-' . bin2hex( random_bytes( 4 ) );

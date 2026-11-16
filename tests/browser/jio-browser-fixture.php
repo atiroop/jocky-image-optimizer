@@ -256,7 +256,7 @@ add_action(
 			$rows    = ( new \Jocky\ImageOptimizer\Recovery\DerivativeRepository() )->for_attachment( $attachment_id, 10 );
 			foreach ( $rows as $row ) {
 				$relative = (string) $row['derivative_relative_path'];
-				if ( false === $root || ! preg_match( '/\.jio\.(?:webp|avif)$/', $relative ) || str_contains( $relative, '..' ) || str_contains( $relative, '\\' ) ) {
+				if ( false === $root || ! preg_match( '/\.jio-(?:[a-f0-9]{16})\.(?:webp|avif)$/', $relative ) || str_contains( $relative, '..' ) || str_contains( $relative, '\\' ) ) {
 					continue;
 				}
 				$path = trailingslashit( $root ) . str_replace( '/', DIRECTORY_SEPARATOR, $relative );

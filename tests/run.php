@@ -13,6 +13,7 @@ use Jocky\ImageOptimizer\CapabilityDetector;
 use Jocky\ImageOptimizer\Admin\AdminPages;
 use Jocky\ImageOptimizer\Plugin;
 use Jocky\ImageOptimizer\Settings;
+use Jocky\ImageOptimizer\Integration\AttachmentReadiness;
 use Jocky\ImageOptimizer\Optimization\EncoderExecution;
 use Jocky\ImageOptimizer\Optimization\EncoderInterface;
 use Jocky\ImageOptimizer\Optimization\EncoderRegistry;
@@ -99,7 +100,7 @@ $assert   = static function ( bool $condition, string $message ) use ( &$failure
 require_once dirname( __DIR__ ) . '/scripts/package-version.php';
 $repository_root = dirname( __DIR__ );
 $release_version = jio_package_version( $repository_root );
-$assert( '0.6.1-beta.1' === $release_version, 'authoritative VERSION matches plugin, README, and changelog metadata' );
+$assert( '0.6.2' === $release_version, 'authoritative VERSION matches plugin, README, and changelog metadata' );
 $assert( version_compare( $release_version, '0.6.0-beta.1', '>' ), 'native version comparison recognizes the patch beta as newer than the installed beta' );
 $assert( version_compare( '0.6.0-beta.1', '0.6.0-beta.2', '<' ) && version_compare( '0.6.0-beta.2', '0.6.0', '<' ), 'native version comparison orders beta prereleases below later prereleases and stable release' );
 $metadata_fixture = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'jio-version-fixture-' . bin2hex( random_bytes( 8 ) );
@@ -221,6 +222,14 @@ if ( function_exists( 'proc_open' ) ) {
 } else {
 	echo "SKIP: process runner checks (proc_open is disabled)\n";
 }
+$assert( 'pending' === AttachmentReadiness::classify( array( 'full|image/webp' => 'pending' ) ), 'JIO completion remains pending while expected work is queued' );
+$assert( 'running' === AttachmentReadiness::classify( array( 'full|image/webp' => 'running' ) ), 'JIO completion distinguishes running work' );
+$assert( 'completed' === AttachmentReadiness::classify( array( 'full|image/webp' => 'completed' ) ), 'JIO completion reports terminal success' );
+$assert( 'partial' === AttachmentReadiness::classify( array( 'full|image/webp' => 'completed', 'size:medium|image/webp' => 'failed' ) ), 'JIO completion reports partial success' );
+$assert( 'failed' === AttachmentReadiness::classify( array( 'full|image/webp' => 'failed' ) ), 'JIO completion reports terminal failure' );
+$assert( 'skipped' === AttachmentReadiness::classify( array( 'full|image/webp' => 'skipped' ) ), 'JIO completion reports skipped work' );
+$assert( 'invalidated' === AttachmentReadiness::classify( array( 'full|image/webp' => 'pending' ), true ), 'JIO completion reports source invalidation' );
+$assert( 'skipped' === AttachmentReadiness::classify( array() ), 'JIO completion reports ineligible attachments with no expected work' );
 unlink( $png_path );
 unlink( $apng_path );
 rmdir( $fixture_root );

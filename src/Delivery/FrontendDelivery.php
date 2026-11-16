@@ -212,8 +212,10 @@ final class FrontendDelivery {
 				return $html;
 			}
 			$source_sets = array();
+			$readiness   = \Jocky\ImageOptimizer\Integration\AttachmentReadiness::state( $attachment_id );
+			$generation  = (string) $readiness['generation'];
 			foreach ( array( 'image/avif', 'image/webp' ) as $mime ) {
-				$candidates = $this->responsive_candidates( $records, $mime, $dimensions[0], $dimensions[1], $dimensions[2], $metadata );
+				$candidates = $this->responsive_candidates( $records, $mime, $dimensions[0], $dimensions[1], $dimensions[2], $metadata, $attachment_id, $generation );
 				if ( array() !== $candidates ) {
 					$source_sets[ $mime ] = $candidates;
 				}
@@ -283,9 +285,11 @@ final class FrontendDelivery {
 	 * @param int    $height          Requested height.
 	 * @param string $required_variant Required variant key.
 	 * @param mixed  $metadata        Current WordPress metadata.
+	 * @param int    $attachment_id Attachment ID.
+	 * @param string $generation Current JIO generation digest.
 	 * @return array<int, string> Escaped when inserted into HTML.
 	 */
-	private function responsive_candidates( array $records, string $mime, int $width, int $height, string $required_variant, $metadata ): array {
+	private function responsive_candidates( array $records, string $mime, int $width, int $height, string $required_variant, $metadata, int $attachment_id, string $generation ): array {
 		$set            = array();
 		$required_found = '' === $required_variant;
 		foreach ( $records as $record ) {
@@ -299,7 +303,7 @@ final class FrontendDelivery {
 			if ( (string) $record['variant'] === $required_variant ) {
 				$required_found = true;
 			}
-			$url = $this->derivative_url( (string) $record['relative'] );
+			$url = $this->derivative_url( (string) $record['relative'], $attachment_id, (string) $record['variant'], $mime, $generation );
 			if ( null !== $url ) {
 				$set[ $record_dimensions[0] ] = $url . ' ' . $record_dimensions[0] . 'w';
 			}
@@ -343,15 +347,23 @@ final class FrontendDelivery {
 	/** Builds a public upload URL from a confined relative path.
 	 *
 	 * @param string $relative Confined relative path from trusted registry target.
+	 * @param int    $attachment_id Attachment ID.
+	 * @param string $variant JIO variant key.
+	 * @param string $mime Resource MIME type.
+	 * @param string $generation Current JIO generation digest.
 	 * @return string|null Escaped URL.
 	 */
-	private function derivative_url( string $relative ): ?string {
+	private function derivative_url( string $relative, int $attachment_id, string $variant, string $mime, string $generation ): ?string {
 		$uploads = wp_upload_dir();
 		if ( ! empty( $uploads['error'] ) || empty( $uploads['baseurl'] ) || str_contains( $relative, '..' ) || str_contains( $relative, '\\' ) ) {
 			return null;
 		}
 		$url = esc_url_raw( trailingslashit( $uploads['baseurl'] ) . implode( '/', array_map( 'rawurlencode', explode( '/', $relative ) ) ) );
-		return '' !== $url ? $url : null;
+		if ( '' === $url ) {
+			return null;
+		}
+		$resolved = apply_filters( 'jio_delivery_resource_url_v1', $url, $attachment_id, $variant, $mime, $generation );
+		return is_string( $resolved ) ? esc_url_raw( $resolved ) : $url;
 	}
 
 	/** Orders available image sources using the administrator's allow-listed preference.
